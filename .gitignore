@@ -1,0 +1,27 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Virtual environments
+.venv/
+.env/
+
+# Data and artifacts
+/data/raw/
+/data/processed/
+*.parquet
+*.h5
+*.pkl
+
+# Logs and checkpoints
+logs/
+checkpoints/
+outputs/
+
+# Notebooks checkpoints
+.ipynb_checkpoints/
+
+# OS files
+.DS_Store
+Thumbs.db

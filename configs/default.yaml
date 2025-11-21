@@ -1,0 +1,36 @@
+project:
+  name: p-i-uncertainty-highway
+  seed: 42
+
+paths:
+  raw_data: data/raw
+  processed_data: data/processed
+  logs: logs
+
+preprocess:
+  sampling_hz: 25
+  downsample_hz: 10
+  smooth_window: 7
+  centerline_points: 200
+  datasets:
+    - highD
+  history_sec: 3.0
+  future_sec: 3.0
+  neighbor_radius_s: 150.0
+  max_neighbors: 32
+  allow_gaps: false
+
+windows:
+  step_sec: 0.5
+  pad_value: 0.0
+
+training:
+  batch_size: 16
+  num_workers: 4
+  learning_rate: 1e-4
+  weight_decay: 1e-4
+  physics_loss_weight: 1.0
+  uncertainty_loss_weight: 0.1
+
+# Override any field by providing an extra YAML via --config-overrides or
+# environment variables matching the dotted path, e.g. PREPROCESS_HISTORY_SEC=4.0
