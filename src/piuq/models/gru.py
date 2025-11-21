@@ -5,7 +5,10 @@ from torch import nn
 
 
 class TrajectoryGRU(nn.Module):
-    """Minimal GRU-based predictor for future Frenet states."""
+    """Minimal GRU-based predictor for future Frenet states.
+    基于 GRU 的简易预测器，用于未来 Frenet 状态预测。
+
+    """
 
     def __init__(
         self,
@@ -32,16 +35,19 @@ class TrajectoryGRU(nn.Module):
 
     def forward(self, history: torch.Tensor) -> torch.Tensor:  # type: ignore[override]
         """Predict future states.
+        预测未来的 Frenet 状态序列。
 
         Parameters
         ----------
         history: torch.Tensor
             Tensor shaped (batch, seq_len, input_size) containing ordered history
             frames.
+            张量形状为 (batch, seq_len, input_size)，包含按时间排序的历史帧。
         Returns
         -------
         torch.Tensor
             Predicted future sequence with shape (batch, future_steps, input_size).
+            返回形状为 (batch, future_steps, input_size) 的未来序列预测。
         """
 
         _, h_n = self.encoder(history)

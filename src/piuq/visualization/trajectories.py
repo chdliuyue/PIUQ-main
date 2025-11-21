@@ -13,7 +13,10 @@ def plot_scene(
     show: bool = False,
     ax: Optional[plt.Axes] = None,
 ):
-    """Plot trajectories in map coordinates."""
+    """Plot trajectories in map coordinates.
+    在地图坐标系中绘制轨迹。
+
+    """
 
     if recording_id is not None:
         df = df[df["recording_id"] == recording_id]
@@ -42,7 +45,10 @@ def plot_prediction(
     show: bool = False,
     ax: Optional[plt.Axes] = None,
 ):
-    """Visualize one rollout in Frenet coordinates (s, n)."""
+    """Visualize one rollout in Frenet coordinates (s, n).
+    以 Frenet 坐标系 (s, n) 可视化单次轨迹展开。
+
+    """
 
     if ax is None:
         _, ax = plt.subplots(figsize=(8, 4))

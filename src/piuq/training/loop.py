@@ -16,6 +16,10 @@ def train_epoch(
     device: torch.device,
     loss_fn: nn.Module | None = None,
 ) -> Tuple[float, float, float]:
+    """Run one training epoch and accumulate loss/metrics.
+    运行一个训练周期并累计损失与评估指标。
+
+    """
     model.train()
     total_loss = 0.0
     total_ade = 0.0
@@ -46,6 +50,10 @@ def evaluate(
     device: torch.device,
     loss_fn: nn.Module | None = None,
 ) -> Tuple[float, float, float]:
+    """Evaluate a model on a validation/test split without gradients.
+    在验证或测试集上评估模型且不计算梯度。
+
+    """
     model.eval()
     total_loss = 0.0
     total_ade = 0.0
@@ -68,8 +76,10 @@ def evaluate(
 
 def window_tensor_loader(windows: Iterable, batch_size: int = 8, shuffle: bool = True) -> DataLoader:
     """Create a DataLoader from window dictionaries.
+    基于窗口字典创建 DataLoader。
 
     Expects each window to contain "history" and "future" DataFrames with columns (s, n).
+    期望每个窗口包含带有 (s, n) 列的 "history" 与 "future" DataFrame。
     """
 
     def to_tensor(window):

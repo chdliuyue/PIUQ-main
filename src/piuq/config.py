@@ -71,7 +71,10 @@ def _load_yaml(path: Path) -> Dict[str, Any]:
 
 
 def _merge_dict(base: Dict[str, Any], update: Dict[str, Any]) -> Dict[str, Any]:
-    """Recursively merge two dictionaries."""
+    """Recursively merge two dictionaries.
+    递归地合并两个字典。
+
+    """
     for k, v in update.items():
         if isinstance(v, dict) and isinstance(base.get(k), dict):
             base[k] = _merge_dict(dict(base[k]), v)
@@ -89,6 +92,7 @@ def _apply_env_overrides(data: Dict[str, Any], prefix: str = "") -> Dict[str, An
         else:
             env_val = None
             # Direct environment var overrides win.
+            # 直接的环境变量覆盖优先级最高。
             import os
 
             if env_key in os.environ:
@@ -107,13 +111,16 @@ def _apply_env_overrides(data: Dict[str, Any], prefix: str = "") -> Dict[str, An
 
 def load_config(base: Path, overrides: Iterable[Path] | None = None) -> Config:
     """Load a YAML config with optional overrides and environment variables.
+    加载 YAML 配置，可选地应用覆盖文件并支持环境变量。
 
     Parameters
     ----------
     base: Path
         Base YAML file path.
+        基础 YAML 文件路径。
     overrides: iterable of Path, optional
         Additional YAML files applied in order.
+        可按顺序应用的额外 YAML 文件。
     """
 
     base_dict = _load_yaml(base)
