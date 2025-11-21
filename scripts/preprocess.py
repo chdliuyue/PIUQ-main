@@ -2,9 +2,12 @@
 from __future__ import annotations
 
 import argparse
+import json
 import pickle
+from collections import OrderedDict
 from pathlib import Path
 
+import numpy as np
 import pandas as pd
 
 from piuq.config import load_config
@@ -37,9 +40,110 @@ def parse_args() -> argparse.Namespace:
         "--out",
         type=Path,
         default=None,
-        help="Override processed output path (Parquet)",
+        help="Override processed output directory (default under cfg.paths.processed_data)",
     )
     return parser.parse_args()
+
+
+def deterministic_split(
+    df: pd.DataFrame, split_key: str, ratios: dict[str, float], seed: int
+) -> dict[str, list]:
+    if split_key not in df.columns:
+        raise KeyError(f"Split key '{split_key}' not found in DataFrame columns")
+
+    unique_keys = sorted(df[split_key].unique())
+    rng = np.random.default_rng(seed)
+    rng.shuffle(unique_keys)
+
+    total_ratio = float(sum(ratios.values()))
+    if total_ratio <= 0:
+        raise ValueError("Split ratios must sum to a positive value")
+
+    normalized = OrderedDict((k, v / total_ratio) for k, v in ratios.items())
+    split_sizes = []
+    num_keys = len(unique_keys)
+    for i, (_, ratio) in enumerate(normalized.items()):
+        if i < len(normalized) - 1:
+            size = int(np.floor(ratio * num_keys))
+        else:
+            size = num_keys - sum(split_sizes)
+        split_sizes.append(size)
+
+    splits: dict[str, list] = {}
+    cursor = 0
+    for (split_name, _), size in zip(normalized.items(), split_sizes):
+        splits[split_name] = unique_keys[cursor : cursor + size]
+        cursor += size
+
+    return splits
+
+
+def build_feature_schema(df: pd.DataFrame, split_key: str) -> dict:
+    vehicle_fields = [
+        "dataset",
+        "recording_id",
+        "track_id",
+        "frame",
+        "t",
+        "x",
+        "y",
+        "vx",
+        "vy",
+        "ax",
+        "ay",
+        "speed",
+        "accel_mag",
+        "jerk",
+        "jerk_x",
+        "jerk_y",
+        "lane_id",
+        "lane_offset",
+        "width",
+        "height",
+        "vehicle_type",
+        "num_lane_changes",
+        "vx_mean",
+        "vy_mean",
+        "ax_mean",
+        "ay_mean",
+        "speed_limit",
+        "frame_rate",
+        "recording_location",
+        "s",
+        "n",
+        "v_s",
+        "v_n",
+        "a_s",
+        "a_n",
+    ]
+    flow_fields = [
+        "density",
+        "frame_mean_speed",
+        "frame_headway_mean",
+        "frame_headway_median",
+    ]
+    physics_fields = ["dhw", "thw", "ttc"]
+    uncertainty_fields = [
+        "vx_var",
+        "vy_var",
+        "ax_var",
+        "ay_var",
+        "speed_var",
+        "missing_rate",
+        "has_missing",
+    ]
+
+    def present(fields: list[str]) -> list[str]:
+        return sorted([f for f in fields if f in df.columns])
+
+    return {
+        "split_key": split_key,
+        "vehicle": present(vehicle_fields),
+        "flow": present(flow_fields),
+        "physics": present(physics_fields),
+        "uncertainty": present(uncertainty_fields),
+        "all_columns": sorted(df.columns),
+    }
 
 
 def main() -> None:
@@ -48,7 +152,6 @@ def main() -> None:
 
     datasets = [args.dataset] if args.dataset else cfg.preprocess.datasets
     processed_dir = Path(cfg.paths.processed_data)
-    processed_dir.mkdir(parents=True, exist_ok=True)
 
     for ds_name in datasets:
         ds = dataset_factory(ds_name)
@@ -61,9 +164,20 @@ def main() -> None:
         print(f"[INFO] Loaded {len(raw_df)} rows")
 
         frenet_df = ds.to_frenet(raw_df)
-        out_file = args.out or (processed_dir / f"{ds_name}_frenet.parquet")
-        frenet_df.to_parquet(out_file, index=False)
-        print(f"[INFO] Saved Frenet trajectories to {out_file}")
+
+        split_cfg = cfg.preprocess.split
+        dataset_dir = args.out if args.out else (processed_dir / ds_name)
+        dataset_dir = dataset_dir if dataset_dir.suffix == "" else dataset_dir.parent
+        dataset_dir.mkdir(parents=True, exist_ok=True)
+
+        splits = deterministic_split(
+            frenet_df, split_cfg.key, split_cfg.ratios, split_cfg.seed
+        )
+
+        schema_path = dataset_dir / "feature_schema.json"
+        schema = build_feature_schema(frenet_df, split_cfg.key)
+        schema_path.write_text(json.dumps(schema, indent=2))
+        print(f"[INFO] Saved feature schema to {schema_path}")
 
         builder = WindowBuilder(
             history_sec=cfg.preprocess.history_sec,
@@ -73,11 +187,25 @@ def main() -> None:
             max_neighbors=cfg.preprocess.max_neighbors,
             allow_gaps=cfg.preprocess.allow_gaps,
         )
-        windows = builder.build(frenet_df)
-        windows_out = out_file.with_suffix(".windows.pkl")
-        with open(windows_out, "wb") as f:
-            pickle.dump(windows, f)
-        print(f"[INFO] Saved {len(windows)} windows to {windows_out}")
+        for split_name, keys in splits.items():
+            split_df = frenet_df[frenet_df[split_cfg.key].isin(keys)].copy()
+            if split_df.empty:
+                print(f"[WARN] Split '{split_name}' is empty; skipping")
+                continue
+
+            split_path = dataset_dir / f"{split_name}.parquet"
+            split_df.to_parquet(split_path, index=False)
+            print(
+                f"[INFO] Saved {len(split_df)} rows for split '{split_name}' to {split_path}"
+            )
+
+            windows = builder.build(split_df)
+            windows_out = dataset_dir / f"{split_name}_windows.pkl"
+            with open(windows_out, "wb") as f:
+                pickle.dump(windows, f)
+            print(
+                f"[INFO] Saved {len(windows)} windows for split '{split_name}' to {windows_out}"
+            )
 
 
 if __name__ == "__main__":
