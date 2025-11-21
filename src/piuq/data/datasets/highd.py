@@ -18,6 +18,14 @@ class HighDDataset(BaseDataset):
 
     name = "highD"
 
+    @staticmethod
+    def _require_columns(df: pd.DataFrame, required: List[str], context: str) -> None:
+        missing = sorted(set(required) - set(df.columns))
+        if missing:
+            raise ValueError(
+                f"HighD {context} missing required columns: {', '.join(missing)}"
+            )
+
     def load_raw(self, root: Path) -> pd.DataFrame:
         root = Path(root)
         search_root = root / "data" if (root / "data").exists() else root
@@ -137,6 +145,22 @@ class HighDDataset(BaseDataset):
         }
 
     def _standardize_tracks(self, df: pd.DataFrame) -> pd.DataFrame:
+        required_cols = {
+            "id",
+            "frame",
+            "x",
+            "y",
+            "width",
+            "height",
+            "xVelocity",
+            "yVelocity",
+            "xAcceleration",
+            "yAcceleration",
+            "laneId",
+            "class",
+        }
+        self._require_columns(df, list(required_cols), "tracks")
+
         df = df.rename(
             columns={
                 "id": "track_id",
@@ -162,6 +186,18 @@ class HighDDataset(BaseDataset):
         return df
 
     def _standardize_tracks_meta(self, meta: pd.DataFrame) -> pd.DataFrame:
+        required = ["id", "numFrames", "width", "height", "class"]
+        self._require_columns(meta, required, "tracksMeta")
+
+        if not {"startFrame", "initialFrame"} & set(meta.columns):
+            raise ValueError(
+                "HighD tracksMeta missing required columns: startFrame or initialFrame"
+            )
+        if not {"endFrame", "finalFrame"} & set(meta.columns):
+            raise ValueError(
+                "HighD tracksMeta missing required columns: endFrame or finalFrame"
+            )
+
         rename_map = {
             "id": "track_id",
             "numLaneChanges": "num_lane_changes",
@@ -189,17 +225,29 @@ class HighDDataset(BaseDataset):
             "startFrame": "start_frame",
             "endFrame": "end_frame",
             "class": "vehicle_type",
+            "initialFrame": "start_frame",
+            "finalFrame": "end_frame",
+            "traveledDistance": "traveled_distance",
+            "minDHW": "min_dhw",
+            "minTHW": "min_thw",
+            "minTTC": "min_ttc",
         }
 
         meta = meta.rename(columns=rename_map)
         meta["track_id"] = meta["track_id"].astype(int)
 
         if {"track_frames", "start_frame", "end_frame"}.issubset(meta.columns):
-            expected = meta["end_frame"] - meta["start_frame"] + 1
-            meta["missing_rate"] = 1.0 - meta["track_frames"] / expected.replace({0: np.nan})
+            meta["start_frame"] = meta["start_frame"].astype(int)
+            meta["end_frame"] = meta["end_frame"].astype(int)
+            meta["track_frames"] = meta["track_frames"].astype(int)
+
+            expected = (meta["end_frame"] - meta["start_frame"] + 1).astype(float)
+            expected = expected.where(expected > 0)
+            meta["missing_rate"] = 1.0 - meta["track_frames"] / expected
+            meta["missing_rate"] = meta["missing_rate"].clip(lower=0)
         else:
             meta["missing_rate"] = np.nan
-        meta["has_missing"] = meta["missing_rate"] > 0
+        meta["has_missing"] = meta["missing_rate"].fillna(0) > 0
 
         stats_cols = [
             "vx_mean",
@@ -210,8 +258,24 @@ class HighDDataset(BaseDataset):
             "missing_rate",
             "has_missing",
         ]
-        stats_cols += [c for c in meta.columns if c.startswith("vx_") or c.startswith("vy_") or c.startswith("ax_") or c.startswith("ay_")]
-        keep = ["track_id", "vehicle_type", "width", "height"] + list(dict.fromkeys(stats_cols))
+        stats_cols += [
+            c
+            for c in meta.columns
+            if c.startswith("vx_") or c.startswith("vy_") or c.startswith("ax_") or c.startswith("ay_")
+        ]
+        keep = [
+            "track_id",
+            "vehicle_type",
+            "width",
+            "height",
+            "track_frames",
+            "start_frame",
+            "end_frame",
+            "traveled_distance",
+            "min_dhw",
+            "min_thw",
+            "min_ttc",
+        ] + list(dict.fromkeys(stats_cols))
         return meta[[c for c in keep if c in meta.columns]]
 
     def _compute_kinematics(self, df: pd.DataFrame, frame_rate: float) -> pd.DataFrame:
