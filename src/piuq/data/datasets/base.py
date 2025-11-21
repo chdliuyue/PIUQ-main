@@ -7,7 +7,7 @@ from typing import Dict
 import numpy as np
 import pandas as pd
 
-from ..geometry.frenet import FrenetFrame
+from piuq.geometry import FrenetFrame
 
 
 class BaseDataset(ABC):
