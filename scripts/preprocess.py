@@ -11,7 +11,9 @@ import numpy as np
 import pandas as pd
 
 from piuq.config import load_config
+from piuq.data.configs import load_dataset_process_config
 from piuq.data.datasets.highd import dataset_factory
+from piuq.data.pipeline import downsample_tracks, harmonize_features, smooth_positions
 from piuq.data.windows import WindowBuilder
 
 
@@ -154,8 +156,9 @@ def main() -> None:
     processed_dir = Path(cfg.paths.processed_data)
 
     for ds_name in datasets:
+        ds_cfg = load_dataset_process_config(ds_name, cfg.preprocess.dataset_config_dir)
         ds = dataset_factory(ds_name)
-        raw_path = Path(cfg.paths.raw_data) / ds_name
+        raw_path = Path(cfg.paths.raw_data) / ds_cfg.raw_subdir
         if not raw_path.exists():
             raise FileNotFoundError(f"Raw data path not found: {raw_path}")
 
@@ -163,7 +166,10 @@ def main() -> None:
         raw_df = ds.load_raw(raw_path)
         print(f"[INFO] Loaded {len(raw_df)} rows")
 
+        raw_df = smooth_positions(raw_df, ds_cfg.smoothing_window)
+        raw_df, _ = downsample_tracks(raw_df, ds_cfg.target_hz)
         frenet_df = ds.to_frenet(raw_df)
+        frenet_df = harmonize_features(frenet_df, ds_cfg)
 
         split_cfg = cfg.preprocess.split
         dataset_dir = args.out if args.out else (processed_dir / ds_name)
@@ -176,6 +182,8 @@ def main() -> None:
 
         schema_path = dataset_dir / "feature_schema.json"
         schema = build_feature_schema(frenet_df, split_cfg.key)
+        schema["configured_groups"] = ds_cfg.feature_groups
+        schema["ordered_features"] = ds_cfg.ordered_feature_names
         schema_path.write_text(json.dumps(schema, indent=2))
         print(f"[INFO] Saved feature schema to {schema_path}")
 

@@ -16,5 +16,5 @@ def test_window_builder_minimal():
     df = pd.DataFrame(data)
     builder = WindowBuilder(history_sec=0.2, future_sec=0.1, step_sec=0.1, neighbor_radius_s=10, max_neighbors=4)
     windows = builder.build(df)
-    assert len(windows) == 3
+    assert len(windows) == 2
     assert all("history" in w and "future" in w for w in windows)

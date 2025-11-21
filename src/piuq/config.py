@@ -27,6 +27,7 @@ class PreprocessConfig(BaseModel):
     smooth_window: int = 7
     centerline_points: int = 200
     datasets: List[str] = Field(default_factory=lambda: ["highD"])
+    dataset_config_dir: Path = Path("configs/datasets")
     history_sec: float = 3.0
     future_sec: float = 3.0
     neighbor_radius_s: float = 150.0

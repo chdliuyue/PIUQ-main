@@ -2,3 +2,5 @@ numpy
 pandas
 pyyaml
 pydantic
+torch
+matplotlib
