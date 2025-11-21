@@ -7,6 +7,10 @@ import pandas as pd
 
 
 class WindowBuilder:
+    """Build sliding windows for ego trajectories and neighbors.
+    为自车轨迹与邻车构建滑动窗口。
+
+    """
     def __init__(
         self,
         history_sec: float,
@@ -24,6 +28,10 @@ class WindowBuilder:
         self.allow_gaps = allow_gaps
 
     def build(self, df: pd.DataFrame) -> List[Dict[str, Any]]:
+        """Generate window dictionaries grouped by dataset and recording.
+        按数据集与录像编号生成窗口字典。
+
+        """
         required = {"dataset", "recording_id", "track_id", "frame", "t", "s", "n"}
         missing = required - set(df.columns)
         if missing:

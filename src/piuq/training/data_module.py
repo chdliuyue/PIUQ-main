@@ -1,7 +1,9 @@
 """Dataset tensorization placeholder.
+数据集张量化的占位模块。
 
 This module will convert window dictionaries into tensors suitable for
 future models. For now it only defines the interface.
+该模块将把窗口字典转换为适用于未来模型的张量，目前仅定义接口。
 """
 
 from __future__ import annotations
@@ -20,6 +22,10 @@ class WindowTensor:
 
 
 def collate_windows(windows: Iterable[Dict[str, Any]], pad_value: float = 0.0) -> WindowTensor:
+    """Pad variable-length windows into aligned numpy arrays for batching.
+    将不同长度的窗口填充为对齐的 numpy 数组以便批处理。
+
+    """
     history_list: List[np.ndarray] = []
     future_list: List[np.ndarray] = []
     mask_list: List[np.ndarray] = []

@@ -9,6 +9,10 @@ from .configs import DatasetProcessConfig
 
 
 def smooth_positions(df: pd.DataFrame, window: int) -> pd.DataFrame:
+    """Apply centered rolling averages to stabilize kinematic signals.
+    应用中心滚动平均来稳定运动学信号。
+
+    """
     if window <= 1:
         return df
     smoothed = df.copy()
@@ -22,7 +26,10 @@ def smooth_positions(df: pd.DataFrame, window: int) -> pd.DataFrame:
 
 
 def downsample_tracks(df: pd.DataFrame, target_hz: float) -> Tuple[pd.DataFrame, float]:
-    """Downsample trajectories to the target frequency while preserving alignment."""
+    """Downsample trajectories to the target frequency while preserving alignment.
+    在保持轨迹对齐的情况下将采样率降至目标频率。
+
+    """
 
     if "t" not in df.columns or target_hz <= 0:
         return df, target_hz
@@ -46,7 +53,10 @@ def downsample_tracks(df: pd.DataFrame, target_hz: float) -> Tuple[pd.DataFrame,
 
 
 def harmonize_features(df: pd.DataFrame, cfg: DatasetProcessConfig) -> pd.DataFrame:
-    """Reorder and back-fill columns to a consistent schema."""
+    """Reorder and back-fill columns to a consistent schema.
+    重新排序并补全列以保持一致的数据模式。
+
+    """
 
     df = df.copy()
     df = cfg.fill_missing_columns(df)
