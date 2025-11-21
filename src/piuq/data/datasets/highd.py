@@ -10,16 +10,22 @@ from .base import BaseDataset
 
 
 class HighDDataset(BaseDataset):
-    """Adapter for the highD dataset."""
+    """Adapter for the highD dataset.
+
+    The expected layout matches the official release, where CSVs live in a
+    ``data/`` subfolder such as ``<raw_root>/highD/data/01_tracks.csv``.
+    """
 
     name = "highD"
 
     def load_raw(self, root: Path) -> pd.DataFrame:
         root = Path(root)
-        track_files = sorted(root.glob("*_tracks.csv"))
+        search_root = root / "data" if (root / "data").exists() else root
+        track_files = sorted(search_root.glob("*_tracks.csv"))
         if not track_files:
             raise FileNotFoundError(
-                f"No *_tracks.csv files found under {root}. Ensure highD is extracted."
+                "No *_tracks.csv files found under "
+                f"{search_root}. Ensure highD is extracted with the data/ folder intact."
             )
 
         records: List[pd.DataFrame] = []

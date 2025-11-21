@@ -1,5 +1,6 @@
 dataset: highD
-raw_subdir: highD
+# Extract the highD release so that *_tracks.csv live under highD/data
+raw_subdir: highD/data
 sampling_hz: 25
 target_hz: 10
 smoothing_window: 7
