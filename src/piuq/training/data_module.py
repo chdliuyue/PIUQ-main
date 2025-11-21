@@ -19,6 +19,10 @@ class WindowTensor:
     history: np.ndarray
     future: np.ndarray
     neighbor_mask: np.ndarray
+    physics: np.ndarray
+    uncertainty: np.ndarray
+    risk: np.ndarray
+    scene: np.ndarray
 
 
 def collate_windows(windows: Iterable[Dict[str, Any]], pad_value: float = 0.0) -> WindowTensor:
@@ -29,6 +33,10 @@ def collate_windows(windows: Iterable[Dict[str, Any]], pad_value: float = 0.0) -
     history_list: List[np.ndarray] = []
     future_list: List[np.ndarray] = []
     mask_list: List[np.ndarray] = []
+    physics_list: List[np.ndarray] = []
+    uncertainty_list: List[np.ndarray] = []
+    risk_list: List[np.ndarray] = []
+    scene_list: List[np.ndarray] = []
 
     for w in windows:
         hist = w["history"][['s','n']].to_numpy()
@@ -38,6 +46,10 @@ def collate_windows(windows: Iterable[Dict[str, Any]], pad_value: float = 0.0) -
         history_list.append(hist)
         future_list.append(fut)
         mask_list.append(mask)
+        physics_list.append(np.asarray(w.get("physics_features", []), dtype=float))
+        uncertainty_list.append(np.asarray(w.get("uncertainty_features", []), dtype=float))
+        risk_list.append(np.asarray([w.get("risk_label", 0.0)], dtype=float))
+        scene_list.append(np.asarray([w.get("scene_label", 0.0)], dtype=float))
 
     max_hist = max(arr.shape[0] for arr in history_list)
     max_fut = max(arr.shape[0] for arr in future_list)
@@ -64,7 +76,20 @@ def collate_windows(windows: Iterable[Dict[str, Any]], pad_value: float = 0.0) -
         mask_padded.append(mask)
     neighbor_mask = np.stack(mask_padded) if mask_padded else np.empty((0, 0))
 
-    return WindowTensor(history=history_tensor, future=future_tensor, neighbor_mask=neighbor_mask)
+    physics_tensor = np.stack(physics_list) if physics_list else np.empty((0, 0))
+    uncertainty_tensor = np.stack(uncertainty_list) if uncertainty_list else np.empty((0, 0))
+    risk_tensor = np.stack(risk_list) if risk_list else np.empty((0, 1))
+    scene_tensor = np.stack(scene_list) if scene_list else np.empty((0, 1))
+
+    return WindowTensor(
+        history=history_tensor,
+        future=future_tensor,
+        neighbor_mask=neighbor_mask,
+        physics=physics_tensor,
+        uncertainty=uncertainty_tensor,
+        risk=risk_tensor,
+        scene=scene_tensor,
+    )
 
 
 __all__ = ["WindowTensor", "collate_windows"]

@@ -214,15 +214,59 @@ def window_tensor_loader(windows: Iterable, batch_size: int = 8, shuffle: bool =
         fut_n = torch.tensor(window["future"]["n"].to_numpy(), dtype=torch.float32)
         history = torch.stack([hist, hist_n], dim=-1)
         future = torch.stack([fut, fut_n], dim=-1)
-        return history, future
+        risk = torch.tensor([window.get("risk_label", 0.0)], dtype=torch.float32)
+        intent = torch.tensor([window.get("intent_label", 0.0)], dtype=torch.float32)
+        physics = torch.tensor(window.get("physics_features", []), dtype=torch.float32)
+        if physics.numel() == 0:
+            physics = torch.zeros(5, dtype=torch.float32)
+        uncertainty = torch.tensor(window.get("uncertainty_features", []), dtype=torch.float32)
+        if uncertainty.numel() == 0:
+            uncertainty = torch.zeros(4, dtype=torch.float32)
+        scene = torch.tensor([window.get("scene_label", 0.0)], dtype=torch.float32)
+        neighbor_mask = torch.ones(len(window.get("neighbors", [])), dtype=torch.bool)
+        return {
+            "history": history,
+            "future": future,
+            "risk": risk,
+            "intent": intent,
+            "physics": physics,
+            "uncertainty": uncertainty,
+            "scene": scene,
+            "neighbor_mask": neighbor_mask,
+        }
 
     tensorized = [to_tensor(w) for w in windows]
-    histories, futures = zip(*tensorized)
-    dataset = torch.utils.data.TensorDataset(
-        torch.nn.utils.rnn.pad_sequence(histories, batch_first=True),
-        torch.nn.utils.rnn.pad_sequence(futures, batch_first=True),
-    )
-    return DataLoader(dataset, batch_size=batch_size, shuffle=shuffle)
+
+    def collate_fn(batch: Iterable[dict]):
+        histories = [b["history"] for b in batch]
+        futures = [b["future"] for b in batch]
+        risks = torch.stack([b["risk"] for b in batch])
+        intents = torch.stack([b["intent"] for b in batch])
+        physics = torch.stack([b["physics"] for b in batch])
+        uncertainty = torch.stack([b["uncertainty"] for b in batch])
+        scenes = torch.stack([b["scene"] for b in batch])
+        max_neighbors = max((m.shape[0] for m in [b["neighbor_mask"] for b in batch]), default=0)
+        padded_masks = []
+        for b in batch:
+            mask = b["neighbor_mask"]
+            pad_len = max_neighbors - mask.shape[0]
+            if pad_len > 0:
+                mask = torch.cat([mask, torch.zeros(pad_len, dtype=torch.bool)])
+            padded_masks.append(mask)
+        neighbor_masks = torch.stack(padded_masks) if padded_masks else torch.empty((0, 0), dtype=torch.bool)
+
+        return {
+            "history": torch.nn.utils.rnn.pad_sequence(histories, batch_first=True),
+            "future": torch.nn.utils.rnn.pad_sequence(futures, batch_first=True),
+            "risk": risks,
+            "intent": intents,
+            "physics": physics,
+            "uncertainty": uncertainty,
+            "scene": scenes,
+            "neighbor_mask": neighbor_masks,
+        }
+
+    return DataLoader(tensorized, batch_size=batch_size, shuffle=shuffle, collate_fn=collate_fn)
 
 
 __all__ = ["train_epoch", "evaluate", "window_tensor_loader"]

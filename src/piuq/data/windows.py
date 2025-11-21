@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Any, Dict, Iterable, List
+from typing import Any, Dict, Iterable, List, Tuple
 
 import numpy as np
 import pandas as pd
@@ -27,6 +27,73 @@ class WindowBuilder:
         self.max_neighbors = max_neighbors
         self.allow_gaps = allow_gaps
 
+    @staticmethod
+    def _kinematics(values: np.ndarray, dt: float) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+        """Compute velocity/acceleration/jerk from a sequence of 2D positions."""
+
+        velocity = np.gradient(values, dt, axis=0)
+        acceleration = np.gradient(velocity, dt, axis=0)
+        jerk = np.gradient(acceleration, dt, axis=0)
+        return velocity, acceleration, jerk
+
+    @staticmethod
+    def _neighbor_speed(track_df: pd.DataFrame, frame: int, dt: float) -> float:
+        """Approximate longitudinal speed of a neighbor around the target frame."""
+
+        frames = track_df["frame"].to_numpy()
+        s_values = track_df["s"].to_numpy()
+        if frame not in frames:
+            return 0.0
+        idx = int(np.where(frames == frame)[0][0])
+        if idx == 0:
+            return 0.0
+        return float((s_values[idx] - s_values[idx - 1]) / dt)
+
+    def _physics_features(
+        self,
+        hist_df: pd.DataFrame,
+        neighbors: pd.DataFrame,
+        track_lookup: Dict[Any, pd.DataFrame],
+        dt: float,
+    ) -> Tuple[np.ndarray, np.ndarray, float, float]:
+        """Derive physics and uncertainty cues for the center frame."""
+
+        positions = hist_df[["s", "n"]].to_numpy()
+        velocity, acceleration, jerk = self._kinematics(positions, dt)
+        jerk_mag = float(np.linalg.norm(jerk[-1])) if len(jerk) > 0 else 0.0
+
+        ego_speed_s = float(velocity[-1, 0]) if len(velocity) > 0 else 0.0
+        var_vel = np.var(velocity, axis=0) if len(velocity) > 0 else np.zeros(2)
+        var_acc = np.var(acceleration, axis=0) if len(acceleration) > 0 else np.zeros(2)
+        uncertainty = np.concatenate([var_vel, var_acc]).astype(np.float32)
+
+        ttc = np.inf
+        thw = np.inf
+        drac = 0.0
+        if not neighbors.empty:
+            ahead = neighbors[neighbors["s"] > hist_df["s"].iloc[-1]]
+            if not ahead.empty:
+                leader = ahead.iloc[0]
+                distance = float(leader["s"] - hist_df["s"].iloc[-1])
+                leader_track = track_lookup.get(leader["track_id"])
+                leader_speed = (
+                    self._neighbor_speed(leader_track, int(leader["frame"]), dt)
+                    if leader_track is not None
+                    else 0.0
+                )
+                rel_speed = ego_speed_s - leader_speed
+                if rel_speed > 1e-3:
+                    ttc = max(distance / rel_speed, 0.0)
+                if ego_speed_s > 1e-3:
+                    thw = max(distance / ego_speed_s, 0.0)
+                if distance > 1e-3:
+                    drac = max((rel_speed**2) / (2 * distance), 0.0)
+
+        lwr_residual = float(np.mean(np.abs(np.gradient(velocity[:, 0], dt)))) if len(velocity) > 2 else 0.0
+
+        physics = np.array([ttc, thw, drac, jerk_mag, lwr_residual], dtype=np.float32)
+        return physics, uncertainty, ttc, drac
+
     def build(self, df: pd.DataFrame) -> List[Dict[str, Any]]:
         """Generate window dictionaries grouped by dataset and recording.
         按数据集与录像编号生成窗口字典。
@@ -47,6 +114,8 @@ class WindowBuilder:
             history_frames = int(round(self.history_sec / dt))
             future_frames = int(round(self.future_sec / dt))
             step_frames = max(1, int(round(self.step_sec / dt)))
+
+            track_lookup = {tid: g.sort_values("frame") for tid, g in scene_df.groupby("track_id")}
 
             frame_lookup = dict(tuple(scene_df.groupby("frame")))
             for track_id, track_df in scene_df.groupby("track_id"):
@@ -81,9 +150,19 @@ class WindowBuilder:
                     neighbors = neighbors_df_all[neighbors_df_all["track_id"] != track_id]
                     if not neighbors.empty:
                         ds = np.abs(neighbors["s"].to_numpy() - ego_state["s"])
-                        neighbors = neighbors.assign(ds=ds)
-                        neighbors = neighbors[neighbors["ds"] <= self.neighbor_radius_s]
-                        neighbors = neighbors.sort_values("ds").head(self.max_neighbors)
+                    neighbors = neighbors.assign(ds=ds)
+                    neighbors = neighbors[neighbors["ds"] <= self.neighbor_radius_s]
+                    neighbors = neighbors.sort_values("ds").head(self.max_neighbors)
+
+                    physics, uncertainty, ttc, drac = self._physics_features(
+                        hist_df, neighbors, track_lookup, dt
+                    )
+                    risk_label = 0
+                    if (np.isfinite(ttc) and ttc < 2.0) or drac > 3.0:
+                        risk_label = 2
+                    elif np.isfinite(ttc) and ttc < 4.0:
+                        risk_label = 1
+                    scene_label = 2 if len(neighbors) >= 5 else 1 if len(neighbors) >= 2 else 0
 
                     window = {
                         "dataset": dataset,
@@ -94,6 +173,10 @@ class WindowBuilder:
                         "history": hist_df.reset_index(drop=True),
                         "future": fut_df.reset_index(drop=True),
                         "neighbors": neighbors.reset_index(drop=True),
+                        "physics_features": physics,
+                        "uncertainty_features": uncertainty,
+                        "risk_label": risk_label,
+                        "scene_label": scene_label,
                     }
                     windows.append(window)
         return windows
