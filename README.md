@@ -46,6 +46,7 @@ python scripts/visualize_raw.py --input data/raw/highd_sample.csv --recording-id
 - ✅ Configuration files load with environment overrides: `python -c "from pathlib import Path; from piuq.config import load_config; print(load_config(Path('configs/default.yaml')))"`
 - ✅ Preprocessing stage completes: `python scripts/preprocess.py --config configs/default.yaml --dataset highD`
 - ✅ Visualization stage produces a plot: run the `visualize_raw.py` command above and confirm an image is written.
+- ✅ Processed outputs pass automated QA: `python scripts/data_selfcheck.py --processed-dir data/processed/highd --config configs/default.yaml`
 
 ## Documentation
 
