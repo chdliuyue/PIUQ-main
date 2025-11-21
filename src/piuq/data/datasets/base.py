@@ -22,6 +22,16 @@ class BaseDataset(ABC):
         """Return centerline polyline for the scene."""
 
     def to_frenet(self, df: pd.DataFrame) -> pd.DataFrame:
+        if "recording_id" not in df.columns:
+            return self._to_frenet_single(df)
+
+        records = []
+        for _, rec_df in df.groupby("recording_id"):
+            records.append(self._to_frenet_single(rec_df))
+
+        return pd.concat(records, ignore_index=True)
+
+    def _to_frenet_single(self, df: pd.DataFrame) -> pd.DataFrame:
         centerline = self.build_centerline(df)
         frenet = FrenetFrame(centerline)
 

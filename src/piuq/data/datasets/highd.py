@@ -1,7 +1,8 @@
 from __future__ import annotations
 
+import ast
 from pathlib import Path
-from typing import Dict, List
+from typing import Dict, List, Sequence
 
 import numpy as np
 import pandas as pd
@@ -18,6 +19,11 @@ class HighDDataset(BaseDataset):
 
     name = "highD"
 
+    def __init__(self, centerline_points: int = 200) -> None:
+        super().__init__()
+        self.centerline_points = centerline_points
+        self.recording_context: Dict[int, Dict[str, float | List[np.ndarray]]] = {}
+
     @staticmethod
     def _require_columns(df: pd.DataFrame, required: List[str], context: str) -> None:
         missing = sorted(set(required) - set(df.columns))
@@ -27,6 +33,7 @@ class HighDDataset(BaseDataset):
             )
 
     def load_raw(self, root: Path) -> pd.DataFrame:
+        self.recording_context = {}
         root = Path(root)
         search_root = root / "data" if (root / "data").exists() else root
         track_files = sorted(search_root.glob("*_tracks.csv"))
@@ -47,6 +54,7 @@ class HighDDataset(BaseDataset):
                 raise FileNotFoundError(f"Tracks meta not found: {tracks_meta_path}")
             rec_meta = pd.read_csv(rec_meta_path)
             context = self._extract_recording_context(rec_meta)
+            self.recording_context[int(rec_meta["id"].iloc[0])] = context
 
             df = self._standardize_tracks(pd.read_csv(tracks_path))
             df["recording_id"] = int(rec_meta["id"].iloc[0])
@@ -138,10 +146,17 @@ class HighDDataset(BaseDataset):
             speed_limit = speed_limit / 3.6  # km/h -> m/s
         location_key = "locationId" if "locationId" in rec_meta.columns else "location"
         location = rec_meta.get(location_key, pd.Series([np.nan])).iloc[0]
+        direction = rec_meta.get("drivingDirection", pd.Series([np.nan])).iloc[0]
+        upper_markings = self._parse_lane_markings(rec_meta.get("upperLaneMarkings"))
+        lower_markings = self._parse_lane_markings(rec_meta.get("lowerLaneMarkings"))
+        lane_markings = upper_markings + lower_markings
+
         return {
             "frame_rate": frame_rate,
             "speed_limit": speed_limit,
             "recording_location": location,
+            "driving_direction": float(direction) if not pd.isna(direction) else np.nan,
+            "lane_markings": lane_markings,
         }
 
     def _standardize_tracks(self, df: pd.DataFrame) -> pd.DataFrame:
@@ -385,10 +400,139 @@ class HighDDataset(BaseDataset):
         return pd.concat(records, ignore_index=True)
 
     def build_centerline(self, df: pd.DataFrame) -> np.ndarray:
+        rec_id = int(df["recording_id"].iloc[0]) if "recording_id" in df.columns else None
+        context = self.recording_context.get(rec_id, {}) if rec_id is not None else {}
+
+        lane_markings: List[np.ndarray] = context.get("lane_markings", []) if context else []
+        driving_direction = context.get("driving_direction", np.nan) if context else np.nan
+
+        centerline = None
+        if lane_markings:
+            centerline = self._centerline_from_lane_markings(lane_markings)
+
+        if centerline is None:
+            centerline = self._centerline_from_tracks(df)
+
+        return self._orient_centerline(centerline, driving_direction)
+
+    # --- lane geometry helpers -------------------------------------------------
+
+    def _parse_lane_markings(self, series: pd.Series | None) -> List[np.ndarray]:
+        if series is None or len(series) == 0:
+            return []
+        raw = series.iloc[0]
+        if pd.isna(raw):
+            return []
+
+        if isinstance(raw, str):
+            cleaned = raw.replace(";", ",")
+            try:
+                data = ast.literal_eval(cleaned)
+            except (SyntaxError, ValueError):
+                floats = [
+                    float(v)
+                    for v in cleaned.replace("[", "").replace("]", "").split(",")
+                    if v.strip()
+                ]
+                data = floats
+        else:
+            data = raw
+
+        return self._normalize_marking_data(data)
+
+    def _normalize_marking_data(self, data: object) -> List[np.ndarray]:
+        if isinstance(data, (list, tuple, np.ndarray)):
+            arr = np.asarray(data, dtype=float)
+        else:
+            return []
+
+        if arr.ndim == 1:
+            return [self._expand_marking_1d(arr)] if arr.size else []
+
+        if arr.ndim == 2:
+            if arr.shape[1] != 2:
+                return [self._expand_marking_1d(arr.ravel())]
+            return [arr]
+
+        markings: List[np.ndarray] = []
+        for sub in arr:
+            sub_arr = np.asarray(sub, dtype=float)
+            if sub_arr.ndim == 1:
+                markings.append(self._expand_marking_1d(sub_arr))
+            else:
+                markings.append(sub_arr.reshape(-1, 2))
+        return [m for m in markings if m.size]
+
+    def _expand_marking_1d(self, arr: np.ndarray) -> np.ndarray:
+        arr = np.asarray(arr, dtype=float).reshape(-1)
+        x_axis = np.linspace(0.0, 1.0, num=arr.size)
+        return np.column_stack([x_axis, arr])
+
+    def _resample_polyline(self, polyline: np.ndarray) -> np.ndarray:
+        diffs = np.diff(polyline, axis=0)
+        seg_len = np.linalg.norm(diffs, axis=1)
+        cumulative = np.concatenate([[0.0], np.cumsum(seg_len)])
+        total = cumulative[-1]
+        if total == 0:
+            return np.vstack([polyline[0], polyline[-1]])
+
+        target = np.linspace(0.0, total, num=self.centerline_points)
+        resampled = np.empty((self.centerline_points, 2), dtype=float)
+
+        for i, s in enumerate(target):
+            idx = np.searchsorted(cumulative, s, side="right") - 1
+            idx = min(idx, len(seg_len) - 1)
+            s0, s1 = cumulative[idx], cumulative[idx + 1]
+            t = 0.0 if s1 == s0 else (s - s0) / (s1 - s0)
+            resampled[i] = polyline[idx] + t * diffs[idx]
+        return resampled
+
+    def _centerline_from_lane_markings(self, lane_markings: Sequence[np.ndarray]) -> np.ndarray | None:
+        polylines = [self._resample_polyline(m) for m in lane_markings if len(m) >= 2]
+        if not polylines:
+            return None
+        if len(polylines) == 1:
+            return polylines[0]
+
+        stack = np.stack(polylines, axis=0)
+        lane_centers = 0.5 * (stack[:-1] + stack[1:])
+        centerline = lane_centers.mean(axis=0)
+        return centerline
+
+    def _centerline_from_tracks(self, df: pd.DataFrame) -> np.ndarray:
         x_min = float(df["x"].min())
         x_max = float(df["x"].max())
-        y_center = float(df["y"].mean())
-        return np.array([[x_min, y_center], [x_max, y_center]], dtype=float)
+        sample_x = np.linspace(x_min, x_max, num=self.centerline_points)
+
+        def _interp_lane(lane_df: pd.DataFrame) -> np.ndarray:
+            lane_sorted = lane_df.sort_values("x")
+            x_vals = lane_sorted["x"].to_numpy()
+            y_vals = lane_sorted["y"].to_numpy()
+            unique_x, idx = np.unique(x_vals, return_index=True)
+            y_unique = y_vals[idx]
+            y_interp = np.interp(sample_x, unique_x, y_unique)
+            return y_interp
+
+        lane_centers: List[np.ndarray] = []
+        if "lane_id" in df.columns:
+            for _, lane_df in df.groupby("lane_id"):
+                lane_centers.append(_interp_lane(lane_df))
+
+        if not lane_centers:
+            y_interp = _interp_lane(df)
+            lane_centers.append(y_interp)
+
+        y_center = np.mean(lane_centers, axis=0)
+        return np.column_stack([sample_x, y_center])
+
+    def _orient_centerline(self, centerline: np.ndarray, driving_direction: float) -> np.ndarray:
+        if np.isnan(driving_direction):
+            return centerline
+
+        increasing = centerline[-1, 0] >= centerline[0, 0]
+        if (driving_direction == 1 and not increasing) or (driving_direction == 2 and increasing):
+            return centerline[::-1]
+        return centerline
 
 
 def dataset_factory(name: str):
