@@ -13,6 +13,14 @@ class PathsConfig(BaseModel):
     logs: Path = Path("logs")
 
 
+class SplitConfig(BaseModel):
+    key: str = "recording_id"
+    ratios: Dict[str, float] = Field(
+        default_factory=lambda: {"train": 0.7, "val": 0.15, "test": 0.15}
+    )
+    seed: int = 42
+
+
 class PreprocessConfig(BaseModel):
     sampling_hz: float = 25.0
     downsample_hz: float = 10.0
@@ -24,6 +32,7 @@ class PreprocessConfig(BaseModel):
     neighbor_radius_s: float = 150.0
     max_neighbors: int = 32
     allow_gaps: bool = False
+    split: SplitConfig = Field(default_factory=SplitConfig)
 
 
 class WindowsConfig(BaseModel):

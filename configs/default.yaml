@@ -19,6 +19,13 @@ preprocess:
   neighbor_radius_s: 150.0
   max_neighbors: 32
   allow_gaps: false
+  split:
+    key: recording_id
+    ratios:
+      train: 0.7
+      val: 0.15
+      test: 0.15
+    seed: 42
 
 windows:
   step_sec: 0.5
