@@ -1,0 +1,58 @@
+dataset: highD
+raw_subdir: highD
+sampling_hz: 25
+target_hz: 10
+smoothing_window: 7
+feature_groups:
+  identifiers:
+    - dataset
+    - recording_id
+    - track_id
+    - frame
+    - t
+  kinematics:
+    - x
+    - y
+    - vx
+    - vy
+    - ax
+    - ay
+    - speed
+    - accel_mag
+    - jerk
+    - jerk_x
+    - jerk_y
+  lane:
+    - lane_id
+    - lane_offset
+    - width
+    - height
+    - vehicle_type
+    - num_lane_changes
+  flow:
+    - density
+    - frame_mean_speed
+    - frame_headway_mean
+    - frame_headway_median
+  physics:
+    - dhw
+    - thw
+    - ttc
+  uncertainty:
+    - vx_var
+    - vy_var
+    - ax_var
+    - ay_var
+    - speed_var
+    - missing_rate
+    - has_missing
+  frenet:
+    - s
+    - n
+    - v_s
+    - v_n
+    - a_s
+    - a_n
+  targets:
+    - s
+    - n
