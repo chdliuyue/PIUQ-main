@@ -20,6 +20,7 @@ class WindowBuilder:
         max_neighbors: int,
         allow_gaps: bool = False,
         risk_ttc_thresholds: Iterable[float] = (5.0, 3.0, 1.5),
+        physics_residual_aggregation: str = "mean_abs",
     ) -> None:
         self.history_sec = history_sec
         self.future_sec = future_sec
@@ -28,6 +29,7 @@ class WindowBuilder:
         self.max_neighbors = max_neighbors
         self.allow_gaps = allow_gaps
         self.risk_ttc_thresholds = tuple(sorted(risk_ttc_thresholds, reverse=True))
+        self.physics_residual_aggregation = physics_residual_aggregation
 
     @staticmethod
     def _kinematics(values: np.ndarray, dt: float) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
@@ -91,10 +93,29 @@ class WindowBuilder:
                 if distance > 1e-3:
                     drac = max((rel_speed**2) / (2 * distance), 0.0)
 
-        lwr_residual = float(np.mean(np.abs(np.gradient(velocity[:, 0], dt)))) if len(velocity) > 2 else 0.0
+        lwr_residual = 0.0
+        if len(velocity) > 2:
+            l_residual = np.gradient(velocity[:, 0], dt)
+            lwr_residual = float(self._aggregate_residual(l_residual))
 
         physics = np.array([ttc, thw, drac, jerk_mag, lwr_residual], dtype=np.float32)
         return physics, uncertainty, ttc, drac
+
+    def _aggregate_residual(self, values: np.ndarray) -> float:
+        if values.size == 0:
+            return 0.0
+
+        mode = self.physics_residual_aggregation.lower()
+        abs_values = np.abs(values)
+
+        if mode in {"mean", "mean_abs"}:
+            data = abs_values if mode.endswith("abs") else values
+            return float(np.mean(data))
+        if mode == "median_abs":
+            return float(np.median(abs_values))
+        if mode == "max_abs":
+            return float(np.max(abs_values))
+        raise ValueError(f"Unknown physics residual aggregation: {self.physics_residual_aggregation}")
 
     @staticmethod
     def _filter_neighbors_by_direction(neighbors: pd.DataFrame, ego_state: pd.Series) -> pd.DataFrame:
