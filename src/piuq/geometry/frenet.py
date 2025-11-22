@@ -60,6 +60,13 @@ class FrenetFrame:
         v_xy: np.ndarray | None = None,
         a_xy: np.ndarray | None = None,
     ) -> dict[str, np.ndarray]:
+        """Project world-frame states into the Frenet frame.
+
+        Velocity and acceleration components follow the stored tangent
+        orientation (i.e., positive ``v_s``/``a_s`` align with the polyline
+        direction). Callers may flip the sign externally to ensure forward
+        motion stays positive regardless of dataset drivingDirection metadata.
+        """
         xy = np.asarray(xy, dtype=float)
         if xy.ndim == 1:
             xy = xy[None, :]

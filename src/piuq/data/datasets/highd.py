@@ -90,8 +90,12 @@ class HighDDataset(BaseDataset):
             "y",
             "vx",
             "vy",
+            "vx_world_raw",
+            "vy_world_raw",
             "ax",
             "ay",
+            "ax_world_raw",
+            "ay_world_raw",
             "speed",
             "accel_mag",
             "jerk",
@@ -624,6 +628,12 @@ class HighDDataset(BaseDataset):
         frames = {direction: FrenetFrame(cl) for direction, cl in centerlines.items()}
 
         out = df.copy()
+        if have_velocity:
+            out["vx_world_raw"] = out["vx"]
+            out["vy_world_raw"] = out["vy"]
+        if have_accel:
+            out["ax_world_raw"] = out["ax"]
+            out["ay_world_raw"] = out["ay"]
         N = len(out)
         res_arrays: Dict[str, np.ndarray] = {
             "s": np.full(N, np.nan),
@@ -663,6 +673,13 @@ class HighDDataset(BaseDataset):
             a_xy = subset[["ax", "ay"]].to_numpy() if have_accel else None
 
             res = frenet.to_frenet(xy, v_xy=v_xy, a_xy=a_xy)
+            # Ensure longitudinal Frenet components stay positive for forward
+            # travel regardless of drivingDirection encoding.
+            direction_sign = 1.0 if direction == 1 else -1.0
+            if "v_s" in res:
+                res["v_s"] *= direction_sign
+            if "a_s" in res:
+                res["a_s"] *= direction_sign
             for key, values in res.items():
                 res_arrays[key][subset.index] = values
 
