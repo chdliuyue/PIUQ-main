@@ -62,10 +62,21 @@ class HighDDataset(BaseDataset):
             df["frame_rate"] = context["frame_rate"]
             df["speed_limit"] = context["speed_limit"]
             df["recording_location"] = context["recording_location"]
-            df["driving_direction"] = context.get("driving_direction", np.nan)
+            direction_series = df.get(
+                "drivingDirection",
+                pd.Series(index=df.index, dtype=float),
+            ).reindex(df.index)
+            if direction_series.isna().all():
+                direction_series = pd.Series(
+                    context.get("driving_direction", np.nan),
+                    index=df.index,
+                    dtype=float,
+                )
+            df["driving_direction"] = direction_series
             df["dataset"] = self.name
 
             track_meta = self._standardize_tracks_meta(pd.read_csv(tracks_meta_path))
+            track_meta = track_meta.drop(columns=["width", "height"], errors="ignore")
             df = df.merge(track_meta, on="track_id", how="left")
 
             df = self._compute_kinematics(df, context["frame_rate"])
@@ -441,6 +452,8 @@ class HighDDataset(BaseDataset):
                 direction_series = df.get(
                     "drivingDirection", pd.Series(index=df.index, dtype=float)
                 ).reindex(df.index)
+                if direction_series.isna().all():
+                    return df
                 return df[direction_series == direction]
             return df[df["lane_id"].isin(lane_ids)]
 
@@ -541,26 +554,28 @@ class HighDDataset(BaseDataset):
             return []
 
         if arr.ndim == 1:
-            return [self._expand_marking_1d(arr)] if arr.size else []
+            return self._expand_marking_offsets(arr)
 
         if arr.ndim == 2:
             if arr.shape[1] != 2:
-                return [self._expand_marking_1d(arr.ravel())]
+                return self._expand_marking_offsets(arr.ravel())
             return [arr]
 
         markings: List[np.ndarray] = []
         for sub in arr:
             sub_arr = np.asarray(sub, dtype=float)
             if sub_arr.ndim == 1:
-                markings.append(self._expand_marking_1d(sub_arr))
+                markings.extend(self._expand_marking_offsets(sub_arr))
             else:
                 markings.append(sub_arr.reshape(-1, 2))
         return [m for m in markings if m.size]
 
-    def _expand_marking_1d(self, arr: np.ndarray) -> np.ndarray:
+    def _expand_marking_offsets(self, arr: np.ndarray) -> List[np.ndarray]:
         arr = np.asarray(arr, dtype=float).reshape(-1)
-        x_axis = np.linspace(0.0, 1.0, num=arr.size)
-        return np.column_stack([x_axis, arr])
+        if arr.size == 0:
+            return []
+        x_axis = np.linspace(0.0, 1.0, num=2)
+        return [np.column_stack([x_axis, np.full_like(x_axis, offset)]) for offset in arr]
 
     def _resample_polyline(self, polyline: np.ndarray) -> np.ndarray:
         diffs = np.diff(polyline, axis=0)

@@ -81,8 +81,10 @@ def train_epoch(
         risk_ce = bce_loss(risk_logits, risk)
         intent_ce = bce_loss(intent_logits, intent)
 
-        risk_weighted = torch.exp(-risk_logvar) * risk_ce + risk_logvar.mean()
-        intent_weighted = torch.exp(-intent_logvar) * intent_ce + intent_logvar.mean()
+        risk_weighted = torch.exp(-risk_logvar) * risk_ce + risk_logvar
+        risk_weighted = risk_weighted.mean()
+        intent_weighted = torch.exp(-intent_logvar) * intent_ce + intent_logvar
+        intent_weighted = intent_weighted.mean()
 
         physics_loss = physics_residuals(traj_mean)
         uncertainty_reg = 0.0
@@ -163,8 +165,10 @@ def evaluate(
             risk_ce = bce_loss(risk_logits, risk)
             intent_ce = bce_loss(intent_logits, intent)
 
-            risk_weighted = torch.exp(-risk_logvar) * risk_ce + risk_logvar.mean()
-            intent_weighted = torch.exp(-intent_logvar) * intent_ce + intent_logvar.mean()
+            risk_weighted = torch.exp(-risk_logvar) * risk_ce + risk_logvar
+            risk_weighted = risk_weighted.mean()
+            intent_weighted = torch.exp(-intent_logvar) * intent_ce + intent_logvar
+            intent_weighted = intent_weighted.mean()
             physics_loss = physics_residuals(traj_mean)
             uncertainty_reg = 0.0
             if epistemic is not None:
