@@ -10,6 +10,7 @@ from pathlib import Path
 
 import numpy as np
 import pandas as pd
+from tqdm.auto import tqdm
 
 ROOT = Path(__file__).resolve().parents[1]
 SRC_ROOT = ROOT / "src"
@@ -21,6 +22,9 @@ from piuq.data.configs import load_dataset_process_config
 from piuq.data.datasets.highd import dataset_factory
 from piuq.data.pipeline import downsample_tracks, harmonize_features, smooth_positions
 from piuq.data.windows import WindowBuilder
+
+ROWS_PER_SHARD = 250_000
+FLOW_FRAMES_PER_CHUNK = 100_000
 
 
 def parse_args() -> argparse.Namespace:
@@ -54,12 +58,17 @@ def parse_args() -> argparse.Namespace:
 
 
 def deterministic_split(
-    df: pd.DataFrame, split_key: str, ratios: dict[str, float], seed: int
+    data: pd.DataFrame | list | tuple | set | np.ndarray,
+    split_key: str,
+    ratios: dict[str, float],
+    seed: int,
 ) -> dict[str, list]:
-    if split_key not in df.columns:
-        raise KeyError(f"Split key '{split_key}' not found in DataFrame columns")
-
-    unique_keys = sorted(df[split_key].unique())
+    if isinstance(data, pd.DataFrame):
+        if split_key not in data.columns:
+            raise KeyError(f"Split key '{split_key}' not found in DataFrame columns")
+        unique_keys = sorted(data[split_key].unique())
+    else:
+        unique_keys = sorted({int(k) for k in data})
     rng = np.random.default_rng(seed)
     rng.shuffle(unique_keys)
 
@@ -171,30 +180,24 @@ def main() -> None:
             raise FileNotFoundError(f"Raw data path not found: {raw_path}")
 
         print(f"[INFO] Loading raw {ds_name} from {raw_path}")
-        raw_df = ds.load_raw(raw_path)
-        print(f"[INFO] Loaded {len(raw_df)} rows")
-
-        raw_df = smooth_positions(raw_df, ds_cfg.smoothing_window)
-        target_hz = cfg.preprocess.target_hz or ds_cfg.target_hz
-        raw_df, _ = downsample_tracks(raw_df, target_hz)
-        frenet_df = ds.to_frenet(raw_df)
-        frenet_df = harmonize_features(frenet_df, ds_cfg)
+        raw_partitions = ds.load_raw(
+            raw_path, flow_frame_chunk_size=FLOW_FRAMES_PER_CHUNK
+        )
 
         split_cfg = cfg.preprocess.split
         dataset_dir = args.out if args.out else (processed_dir / ds_name)
         dataset_dir = dataset_dir if dataset_dir.suffix == "" else dataset_dir.parent
         dataset_dir.mkdir(parents=True, exist_ok=True)
 
-        splits = deterministic_split(
-            frenet_df, split_cfg.key, split_cfg.ratios, split_cfg.seed
-        )
+        if split_cfg.key != "recording_id":
+            raise ValueError("Sharded preprocessing currently supports recording_id splits only")
 
-        schema_path = dataset_dir / "feature_schema.json"
-        schema = build_feature_schema(frenet_df, split_cfg.key)
-        schema["configured_groups"] = ds_cfg.feature_groups
-        schema["ordered_features"] = ds_cfg.ordered_feature_names
-        schema_path.write_text(json.dumps(schema, indent=2))
-        print(f"[INFO] Saved feature schema to {schema_path}")
+        splits = deterministic_split(
+            list(ds.recording_context.keys()), split_cfg.key, split_cfg.ratios, split_cfg.seed
+        )
+        split_lookup = {key: split for split, keys in splits.items() for key in keys}
+        for split_name in splits:
+            (dataset_dir / split_name).mkdir(parents=True, exist_ok=True)
 
         builder = WindowBuilder(
             history_sec=cfg.preprocess.history_sec,
@@ -206,24 +209,88 @@ def main() -> None:
             risk_ttc_thresholds=cfg.windows.risk_ttc_thresholds,
             physics_residual_aggregation=cfg.windows.physics_residual_aggregation,
         )
+
+        shard_buffers: dict[str, list[pd.DataFrame]] = {
+            split: [] for split in splits
+        }
+        shard_counts = {split: 0 for split in splits}
+        shard_indices = {split: 0 for split in splits}
+        shard_progress = {
+            split: tqdm(desc=f"{split} shards", leave=False, unit="shard") for split in splits
+        }
+        all_columns: set[str] = set()
+        rows_per_shard = ROWS_PER_SHARD
+        partition_bar = tqdm(desc=f"Processing {ds_name} partitions", unit="chunk")
+
+        def flush_shard(split_name: str, force: bool = False) -> None:
+            if not shard_buffers[split_name]:
+                return
+            if not force and shard_counts[split_name] < rows_per_shard:
+                return
+            shard_dir = dataset_dir / split_name
+            shard_path = shard_dir / f"part-{shard_indices[split_name]:05d}.parquet"
+            shard_df = pd.concat(shard_buffers[split_name], ignore_index=True)
+            shard_df.to_parquet(shard_path, index=False)
+            shard_buffers[split_name].clear()
+            shard_counts[split_name] = 0
+            shard_indices[split_name] += 1
+            shard_progress[split_name].update(1)
+
+        for raw_df in raw_partitions:
+            partition_bar.update(1)
+            raw_df = smooth_positions(raw_df, ds_cfg.smoothing_window)
+            target_hz = cfg.preprocess.target_hz or ds_cfg.target_hz
+            raw_df, _ = downsample_tracks(raw_df, target_hz)
+            frenet_df = raw_df if {"s", "n"}.issubset(raw_df.columns) else ds.to_frenet(raw_df)
+            frenet_df = harmonize_features(frenet_df, ds_cfg)
+            all_columns.update(frenet_df.columns)
+
+            key_values = frenet_df[split_cfg.key].unique()
+            if len(key_values) != 1:
+                raise ValueError("Expected a single split key value per partition")
+            rec_id = int(key_values[0])
+            split_name = split_lookup.get(rec_id)
+            if split_name is None:
+                print(f"[WARN] Recording {rec_id} not assigned to any split; skipping")
+                continue
+
+            shard_buffers[split_name].append(frenet_df)
+            shard_counts[split_name] += len(frenet_df)
+            flush_shard(split_name)
+
+        for split_name in splits:
+            flush_shard(split_name, force=True)
+            shard_progress[split_name].close()
+        partition_bar.close()
+
+        schema_df = pd.DataFrame(columns=sorted(all_columns))
+        schema_path = dataset_dir / "feature_schema.json"
+        schema = build_feature_schema(schema_df, split_cfg.key)
+        schema["configured_groups"] = ds_cfg.feature_groups
+        schema["ordered_features"] = ds_cfg.ordered_feature_names
+        schema_path.write_text(json.dumps(schema, indent=2))
+        print(f"[INFO] Saved feature schema to {schema_path}")
+
         for split_name, keys in splits.items():
-            split_df = frenet_df[frenet_df[split_cfg.key].isin(keys)].copy()
-            if split_df.empty:
+            split_dir = dataset_dir / split_name
+            shard_files = sorted(split_dir.glob("*.parquet"))
+            if not shard_files:
                 print(f"[WARN] Split '{split_name}' is empty; skipping")
                 continue
 
-            split_path = dataset_dir / f"{split_name}.parquet"
-            split_df.to_parquet(split_path, index=False)
-            print(
-                f"[INFO] Saved {len(split_df)} rows for split '{split_name}' to {split_path}"
-            )
+            shard_windows: list[dict] = []
+            shard_bar = tqdm(shard_files, desc=f"Windows {split_name}", unit="shard")
+            for shard_path in shard_bar:
+                shard_df = pd.read_parquet(shard_path)
+                shard_windows.extend(builder.build(shard_df))
+                shard_bar.set_postfix(rows=len(shard_df), windows=len(shard_windows))
+            shard_bar.close()
 
-            windows = builder.build(split_df)
             windows_out = dataset_dir / f"{split_name}_windows.pkl"
             with open(windows_out, "wb") as f:
-                pickle.dump(windows, f)
+                pickle.dump(shard_windows, f)
             print(
-                f"[INFO] Saved {len(windows)} windows for split '{split_name}' to {windows_out}"
+                f"[INFO] Saved {len(shard_windows)} windows for split '{split_name}' to {windows_out}"
             )
 
 
