@@ -1,5 +1,7 @@
 import numpy as np
 import pandas as pd
+import numpy as np
+import pandas as pd
 import pytest
 
 from piuq.data.windows import WindowBuilder
@@ -95,3 +97,51 @@ def test_ttc_min_future_risk_tiers():
     window = windows[0]
     assert window["ttc_min_future"] == pytest.approx(0.5)
     assert window["risk_label"] == 3
+
+
+def test_physics_residual_aggregation():
+    df = pd.DataFrame(
+        {
+            "dataset": ["d"] * 5,
+            "recording_id": [0] * 5,
+            "track_id": [1] * 5,
+            "frame": [0, 1, 2, 3, 4],
+            "t": [0.0, 1.0, 2.0, 3.0, 4.0],
+            "s": [0.0, 1.0, 3.0, 6.5, 12.5],
+            "n": [0.0] * 5,
+        }
+    )
+
+    mean_builder = WindowBuilder(
+        history_sec=2.0,
+        future_sec=1.0,
+        step_sec=1.0,
+        neighbor_radius_s=5,
+        max_neighbors=2,
+        physics_residual_aggregation="mean_abs",
+    )
+    max_builder = WindowBuilder(
+        history_sec=2.0,
+        future_sec=1.0,
+        step_sec=1.0,
+        neighbor_radius_s=5,
+        max_neighbors=2,
+        physics_residual_aggregation="max_abs",
+    )
+
+    mean_window = mean_builder.build(df)[0]
+    max_window = max_builder.build(df)[0]
+
+    hist_df = mean_window["history"]
+    dt = float(hist_df["t"].diff().dropna().median())
+    positions = hist_df[["s", "n"]].to_numpy()
+    velocity = np.gradient(positions, dt, axis=0)
+    longitudinal_residual = np.gradient(velocity[:, 0], dt)
+    expected_mean = float(np.mean(np.abs(longitudinal_residual)))
+    expected_max = float(np.max(np.abs(longitudinal_residual)))
+
+    mean_residual = mean_window["physics_features"][4]
+    max_residual = max_window["physics_features"][4]
+
+    assert mean_residual == pytest.approx(expected_mean)
+    assert max_residual == pytest.approx(expected_max)

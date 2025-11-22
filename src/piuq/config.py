@@ -33,6 +33,8 @@ class PreprocessConfig(BaseModel):
     neighbor_radius_s: float = 150.0
     max_neighbors: int = 32
     allow_gaps: bool = False
+    target_hz: float = 10.0
+    seed: int = 42
     split: SplitConfig = Field(default_factory=SplitConfig)
 
 
@@ -40,6 +42,14 @@ class WindowsConfig(BaseModel):
     step_sec: float = 0.5
     pad_value: float = 0.0
     risk_ttc_thresholds: Tuple[float, float, float] = (5.0, 3.0, 1.5)
+    physics_residual_aggregation: str = "mean_abs"
+
+
+class TensorConfig(BaseModel):
+    history_features: Tuple[str, ...] = ("s", "n")
+    future_features: Tuple[str, ...] = ("s", "n")
+    physics_dim: int = 5
+    uncertainty_dim: int = 4
 
 
 class TrainingConfig(BaseModel):
@@ -61,6 +71,7 @@ class Config(BaseModel):
     paths: PathsConfig = PathsConfig()
     preprocess: PreprocessConfig = PreprocessConfig()
     windows: WindowsConfig = WindowsConfig()
+    tensor: TensorConfig = TensorConfig()
     training: TrainingConfig = TrainingConfig()
 
 

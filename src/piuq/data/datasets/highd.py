@@ -8,6 +8,7 @@ import numpy as np
 import pandas as pd
 
 from .base import BaseDataset
+from piuq.geometry import FrenetFrame
 
 
 class HighDDataset(BaseDataset):
@@ -437,7 +438,10 @@ class HighDDataset(BaseDataset):
         def _lane_subset(direction: int) -> pd.DataFrame:
             lane_ids = [lane_id for lane_id, d in lane_direction_map.items() if d == direction]
             if "lane_id" not in df.columns or not lane_ids:
-                return df[df.get("drivingDirection", pd.Series(dtype=float)) == direction]
+                direction_series = df.get(
+                    "drivingDirection", pd.Series(index=df.index, dtype=float)
+                ).reindex(df.index)
+                return df[direction_series == direction]
             return df[df["lane_id"].isin(lane_ids)]
 
         centerlines: Dict[int, np.ndarray] = {}
@@ -630,6 +634,8 @@ class HighDDataset(BaseDataset):
         frames = {direction: FrenetFrame(cl) for direction, cl in centerlines.items()}
 
         out = df.copy()
+        have_velocity = {"vx", "vy"}.issubset(out.columns)
+        have_accel = {"ax", "ay"}.issubset(out.columns)
         if have_velocity:
             out["vx_world_raw"] = out["vx"]
             out["vy_world_raw"] = out["vy"]
@@ -642,9 +648,6 @@ class HighDDataset(BaseDataset):
             "n": np.full(N, np.nan),
             "seg_idx": np.full(N, -1, dtype=int),
         }
-
-        have_velocity = {"vx", "vy"}.issubset(out.columns)
-        have_accel = {"ax", "ay"}.issubset(out.columns)
         if have_velocity:
             res_arrays.update({"v_s": np.full(N, np.nan), "v_n": np.full(N, np.nan)})
         if have_accel:

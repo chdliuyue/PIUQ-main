@@ -152,6 +152,8 @@ def main() -> None:
     args = parse_args()
     cfg = load_config(args.config, args.config_overrides)
 
+    np.random.seed(cfg.preprocess.seed)
+
     datasets = [args.dataset] if args.dataset else cfg.preprocess.datasets
     processed_dir = Path(cfg.paths.processed_data)
 
@@ -167,7 +169,8 @@ def main() -> None:
         print(f"[INFO] Loaded {len(raw_df)} rows")
 
         raw_df = smooth_positions(raw_df, ds_cfg.smoothing_window)
-        raw_df, _ = downsample_tracks(raw_df, ds_cfg.target_hz)
+        target_hz = cfg.preprocess.target_hz or ds_cfg.target_hz
+        raw_df, _ = downsample_tracks(raw_df, target_hz)
         frenet_df = ds.to_frenet(raw_df)
         frenet_df = harmonize_features(frenet_df, ds_cfg)
 
@@ -195,6 +198,7 @@ def main() -> None:
             max_neighbors=cfg.preprocess.max_neighbors,
             allow_gaps=cfg.preprocess.allow_gaps,
             risk_ttc_thresholds=cfg.windows.risk_ttc_thresholds,
+            physics_residual_aggregation=cfg.windows.physics_residual_aggregation,
         )
         for split_name, keys in splits.items():
             split_df = frenet_df[frenet_df[split_cfg.key].isin(keys)].copy()

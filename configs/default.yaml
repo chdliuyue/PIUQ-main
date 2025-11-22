@@ -19,6 +19,8 @@ preprocess:
   neighbor_radius_s: 150.0
   max_neighbors: 32
   allow_gaps: false
+  target_hz: 10.0
+  seed: 42
   split:
     key: recording_id
     ratios:
@@ -31,6 +33,13 @@ windows:
   step_sec: 0.5
   pad_value: 0.0
   risk_ttc_thresholds: [5.0, 3.0, 1.5]
+  physics_residual_aggregation: mean_abs
+
+tensor:
+  history_features: [s, n]
+  future_features: [s, n]
+  physics_dim: 5
+  uncertainty_dim: 4
 
 training:
   batch_size: 16
