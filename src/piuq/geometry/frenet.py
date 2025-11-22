@@ -5,11 +5,13 @@ import numpy as np
 
 class FrenetFrame:
     """Frenet frame defined by a polyline centerline.
+    由折线中心线定义的 Frenet 坐标系。
 
     Parameters
     ----------
     centerline_xy : array-like, shape (N,2)
         Polyline points in driving direction order.
+        按行驶方向排序的折线点集。
     """
 
     def __init__(self, centerline_xy: np.ndarray) -> None:

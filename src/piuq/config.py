@@ -63,7 +63,7 @@ class Config(BaseModel):
     training: TrainingConfig = TrainingConfig()
 
 
-# --- helpers ---------------------------------------------------------------
+# --- helpers / 辅助函数 ---------------------------------------------------------------
 
 def _load_yaml(path: Path) -> Dict[str, Any]:
     with path.open("r", encoding="utf-8") as f:
