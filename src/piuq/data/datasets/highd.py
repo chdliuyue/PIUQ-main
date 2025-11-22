@@ -3,10 +3,11 @@ from __future__ import annotations
 import ast
 import logging
 from pathlib import Path
-from typing import Dict, List, Sequence
+from typing import Any, Dict, Iterable, List, Sequence
 
 import numpy as np
 import pandas as pd
+from tqdm.auto import tqdm
 
 from .base import BaseDataset
 from piuq.geometry import FrenetFrame
@@ -34,7 +35,13 @@ class HighDDataset(BaseDataset):
                 f"HighD {context} missing required columns: {', '.join(missing)}"
             )
 
-    def load_raw(self, root: Path) -> pd.DataFrame:
+    def load_raw(
+        self,
+        root: Path,
+        *,
+        flow_frame_chunk_size: int | None = None,
+        **_: Any,
+    ) -> Iterable[pd.DataFrame]:
         self.recording_context = {}
         root = Path(root)
         search_root = root / "data" if (root / "data").exists() else root
@@ -45,7 +52,6 @@ class HighDDataset(BaseDataset):
                 f"{search_root}. Ensure highD is extracted with the data/ folder intact."
             )
 
-        records: List[pd.DataFrame] = []
         for tracks_path in track_files:
             rec_id = tracks_path.stem.split("_")[0]
             rec_meta_path = tracks_path.with_name(f"{rec_id}_recordingMeta.csv")
@@ -56,108 +62,118 @@ class HighDDataset(BaseDataset):
                 raise FileNotFoundError(f"Tracks meta not found: {tracks_meta_path}")
             rec_meta = pd.read_csv(rec_meta_path)
             context = self._extract_recording_context(rec_meta)
-            self.recording_context[int(rec_meta["id"].iloc[0])] = context
+            rec_identifier = int(rec_meta["id"].iloc[0])
+            context["recording_id"] = rec_identifier
+            self.recording_context[rec_identifier] = context
 
-            df = self._standardize_tracks(pd.read_csv(tracks_path), context["frame_rate"])
-            df["recording_id"] = int(rec_meta["id"].iloc[0])
-            df["frame_rate"] = context["frame_rate"]
-            df["speed_limit"] = context["speed_limit"]
-            df["recording_location"] = context["recording_location"]
-            direction_series = df.get(
-                "drivingDirection",
-                pd.Series(index=df.index, dtype=float),
-            ).reindex(df.index)
-            if direction_series.isna().all():
-                direction_series = pd.Series(
-                    context.get("driving_direction", np.nan),
-                    index=df.index,
-                    dtype=float,
+        def _iterator() -> Iterable[pd.DataFrame]:
+            keep_cols = [
+                "dataset",
+                "recording_id",
+                "track_id",
+                "frame",
+                "t",
+                "x",
+                "y",
+                "vx",
+                "vy",
+                "vx_world_raw",
+                "vy_world_raw",
+                "ax",
+                "ay",
+                "ax_world_raw",
+                "ay_world_raw",
+                "speed",
+                "accel_mag",
+                "jerk",
+                "jerk_x",
+                "jerk_y",
+                "lane_id",
+                "driving_direction",
+                "lane_offset",
+                "width",
+                "height",
+                "vehicle_type",
+                "num_lane_changes",
+                "vx_mean",
+                "vy_mean",
+                "ax_mean",
+                "ay_mean",
+                "vx_var",
+                "vy_var",
+                "ax_var",
+                "ay_var",
+                "speed_var",
+                "missing_rate",
+                "has_missing",
+                "speed_limit",
+                "frame_rate",
+                "recording_location",
+                "dhw",
+                "thw",
+                "ttc",
+                "density",
+                "frame_mean_speed",
+                "frame_headway_mean",
+                "frame_headway_median",
+                "vx_norm",
+                "vy_norm",
+                "speed_norm",
+                "ax_norm",
+                "ay_norm",
+                "sx",
+                "sy",
+                "svx",
+                "svy",
+                "sax",
+                "say",
+            ]
+
+            for tracks_path in tqdm(track_files, desc="highD recordings"):
+                rec_id = int(tracks_path.stem.split("_")[0])
+                context = self.recording_context[rec_id]
+                tracks_meta_path = tracks_path.with_name(f"{rec_id}_tracksMeta.csv")
+
+                df = self._standardize_tracks(
+                    pd.read_csv(tracks_path), context["frame_rate"]
                 )
-            df["driving_direction"] = direction_series
-            df["dataset"] = self.name
+                df["recording_id"] = int(context["recording_id"])
+                df["frame_rate"] = context["frame_rate"]
+                df["speed_limit"] = context["speed_limit"]
+                df["recording_location"] = context["recording_location"]
+                direction_series = df.get(
+                    "drivingDirection",
+                    pd.Series(index=df.index, dtype=float),
+                ).reindex(df.index)
+                if direction_series.isna().all():
+                    direction_series = pd.Series(
+                        context.get("driving_direction", np.nan),
+                        index=df.index,
+                        dtype=float,
+                    )
+                df["driving_direction"] = direction_series
+                df["dataset"] = self.name
 
-            track_meta = self._standardize_tracks_meta(pd.read_csv(tracks_meta_path))
-            track_meta = track_meta.drop(columns=["width", "height"], errors="ignore")
-            df = df.merge(track_meta, on="track_id", how="left")
+                track_meta = self._standardize_tracks_meta(pd.read_csv(tracks_meta_path))
+                track_meta = track_meta.drop(columns=["width", "height"], errors="ignore")
+                df = df.merge(track_meta, on="track_id", how="left")
 
-            df = self._compute_kinematics(df, context["frame_rate"])
-            df = self._compute_gaps(df)
-            df = self._compute_lane_offsets(df)
-            df = self._compute_uncertainty(df)
-            df = self._compute_normalized(df)
+                df = self._compute_kinematics(df, context["frame_rate"])
+                df = self._compute_gaps(df)
+                df = self._compute_lane_offsets(df)
+                df = self._compute_uncertainty(df)
+                df = self._compute_normalized(df)
 
-            df = df.sort_values(["frame", "track_id"]).reset_index(drop=True)
+                df = df.sort_values(["frame", "track_id"]).reset_index(drop=True)
 
-            records.append(df)
+                for annotated in self._annotate_traffic_flow(
+                    df, chunk_size=flow_frame_chunk_size
+                ):
+                    annotated = self.to_frenet(annotated)
+                    cols = [c for c in keep_cols if c in annotated.columns]
+                    yield annotated[cols]
 
-        out = pd.concat(records, ignore_index=True)
-        out = self._annotate_traffic_flow(out)
-        out = self.to_frenet(out)
-
-        keep_cols = [
-            "dataset",
-            "recording_id",
-            "track_id",
-            "frame",
-            "t",
-            "x",
-            "y",
-            "vx",
-            "vy",
-            "vx_world_raw",
-            "vy_world_raw",
-            "ax",
-            "ay",
-            "ax_world_raw",
-            "ay_world_raw",
-            "speed",
-            "accel_mag",
-            "jerk",
-            "jerk_x",
-            "jerk_y",
-            "lane_id",
-            "driving_direction",
-            "lane_offset",
-            "width",
-            "height",
-            "vehicle_type",
-            "num_lane_changes",
-            "vx_mean",
-            "vy_mean",
-            "ax_mean",
-            "ay_mean",
-            "vx_var",
-            "vy_var",
-            "ax_var",
-            "ay_var",
-            "speed_var",
-            "missing_rate",
-            "has_missing",
-            "speed_limit",
-            "frame_rate",
-            "recording_location",
-            "dhw",
-            "thw",
-            "ttc",
-            "density",
-            "frame_mean_speed",
-            "frame_headway_mean",
-            "frame_headway_median",
-            "vx_norm",
-            "vy_norm",
-            "speed_norm",
-            "ax_norm",
-            "ay_norm",
-            "sx",
-            "sy",
-            "svx",
-            "svy",
-            "sax",
-            "say",
-        ]
-
-        keep_cols = [c for c in keep_cols if c in out.columns]
-        return out[keep_cols]
+        return _iterator()
 
     def _extract_recording_context(self, rec_meta: pd.DataFrame) -> Dict[str, float]:
         frame_rate = float(rec_meta.get("frameRate", pd.Series([np.nan])).iloc[0])
@@ -425,25 +441,46 @@ class HighDDataset(BaseDataset):
         df = df.merge(var_stats, on="track_id", how="left")
         return df
 
-    def _annotate_traffic_flow(self, df: pd.DataFrame) -> pd.DataFrame:
-        records: List[pd.DataFrame] = []
-        for rec_id, rec_df in df.groupby("recording_id"):
-            road_length = float(rec_df["x"].max() - rec_df["x"].min())
-            frame_group = rec_df.groupby("frame")
-            density = frame_group["track_id"].nunique() / road_length if road_length > 0 else np.nan
-            speed_mean = frame_group["speed"].mean()
-            headway_mean = frame_group["dhw"].mean()
-            headway_median = frame_group["dhw"].median()
-            per_frame = pd.DataFrame({
+    def _annotate_traffic_flow(
+        self, df: pd.DataFrame, *, chunk_size: int | None = None
+    ) -> Iterable[pd.DataFrame]:
+        if "recording_id" not in df.columns:
+            raise ValueError("Traffic flow annotation requires recording_id column")
+        if df["recording_id"].nunique() != 1:
+            raise ValueError("Pass a single recording to _annotate_traffic_flow")
+
+        rec_id = int(df["recording_id"].iloc[0])
+        road_length = float(df["x"].max() - df["x"].min())
+        frame_group = df.groupby("frame")
+        density = (
+            frame_group["track_id"].nunique() / road_length if road_length > 0 else np.nan
+        )
+        speed_mean = frame_group["speed"].mean()
+        headway_mean = frame_group["dhw"].mean()
+        headway_median = frame_group["dhw"].median()
+        per_frame = pd.DataFrame(
+            {
                 "frame": density.index,
                 "density": density.values,
                 "frame_mean_speed": speed_mean.values,
                 "frame_headway_mean": headway_mean.values,
                 "frame_headway_median": headway_median.values,
-            })
-            rec_df = rec_df.merge(per_frame, on="frame", how="left")
-            records.append(rec_df)
-        return pd.concat(records, ignore_index=True)
+            }
+        )
+
+        if not chunk_size or chunk_size <= 0:
+            yield df.merge(per_frame, on="frame", how="left")
+            return
+
+        for start in tqdm(
+            range(0, len(per_frame), chunk_size),
+            desc=f"traffic flow {rec_id}",
+            leave=False,
+        ):
+            frame_slice = per_frame.iloc[start : start + chunk_size]
+            frames = frame_slice["frame"].to_numpy()
+            rec_slice = df[df["frame"].isin(frames)]
+            yield rec_slice.merge(frame_slice, on="frame", how="left")
 
     def build_centerline(self, df: pd.DataFrame) -> np.ndarray:
         centerlines, _ = self.build_centerlines(df)

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from pathlib import Path
-from typing import Dict
+from typing import Dict, Iterable
 
 import numpy as np
 import pandas as pd
@@ -14,8 +14,8 @@ class BaseDataset(ABC):
     name: str = "base"
 
     @abstractmethod
-    def load_raw(self, root: Path) -> pd.DataFrame:
-        """Load raw trajectories into a unified DataFrame."""
+    def load_raw(self, root: Path, **kwargs) -> Iterable[pd.DataFrame]:
+        """Yield raw trajectory partitions as unified DataFrames."""
 
     @abstractmethod
     def build_centerline(self, df: pd.DataFrame) -> np.ndarray:
