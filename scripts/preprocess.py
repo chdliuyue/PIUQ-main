@@ -277,19 +277,26 @@ def main() -> None:
                 print(f"[WARN] Split '{split_name}' is empty; skipping")
                 continue
 
-            shard_windows: list[dict] = []
             shard_bar = tqdm(shard_files, desc=f"Windows {split_name}", unit="shard")
+            total_windows = 0
             for shard_path in shard_bar:
                 shard_df = pd.read_parquet(shard_path)
-                shard_windows.extend(builder.build(shard_df))
-                shard_bar.set_postfix(rows=len(shard_df), windows=len(shard_windows))
+                shard_windows = builder.build(shard_df)
+                total_windows += len(shard_windows)
+
+                windows_out = dataset_dir / f"{split_name}_{shard_path.stem}_windows.pkl"
+                with open(windows_out, "wb") as f:
+                    pickle.dump(shard_windows, f)
+
+                shard_bar.set_postfix(
+                    rows=len(shard_df),
+                    shard_windows=len(shard_windows),
+                    total_windows=total_windows,
+                )
             shard_bar.close()
 
-            windows_out = dataset_dir / f"{split_name}_windows.pkl"
-            with open(windows_out, "wb") as f:
-                pickle.dump(shard_windows, f)
             print(
-                f"[INFO] Saved {len(shard_windows)} windows for split '{split_name}' to {windows_out}"
+                f"[INFO] Saved {total_windows} windows for split '{split_name}' across {len(shard_files)} shards"
             )
 
 
