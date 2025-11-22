@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import ast
+import logging
 from pathlib import Path
 from typing import Dict, List, Sequence
 
@@ -224,7 +225,7 @@ class HighDDataset(BaseDataset):
         return df
 
     def _standardize_tracks_meta(self, meta: pd.DataFrame) -> pd.DataFrame:
-        required = ["id", "numFrames", "width", "height", "class"]
+        required = ["id", "numFrames", "width", "height"]
         self._require_columns(meta, required, "tracksMeta")
 
         if not {"startFrame", "initialFrame"} & set(meta.columns):
@@ -235,6 +236,11 @@ class HighDDataset(BaseDataset):
             raise ValueError(
                 "HighD tracksMeta missing required columns: endFrame or finalFrame"
             )
+
+        vehicle_type_col = next(
+            (col for col in ("class", "vehicleClass", "vehicle_type") if col in meta.columns),
+            None,
+        )
 
         rename_map = {
             "id": "track_id",
@@ -262,7 +268,6 @@ class HighDDataset(BaseDataset):
             "numFrames": "track_frames",
             "startFrame": "start_frame",
             "endFrame": "end_frame",
-            "class": "vehicle_type",
             "initialFrame": "start_frame",
             "finalFrame": "end_frame",
             "traveledDistance": "traveled_distance",
@@ -270,9 +275,28 @@ class HighDDataset(BaseDataset):
             "minTHW": "min_thw",
             "minTTC": "min_ttc",
         }
+        if vehicle_type_col:
+            rename_map[vehicle_type_col] = "vehicle_type"
 
         meta = meta.rename(columns=rename_map)
         meta["track_id"] = meta["track_id"].astype(int)
+
+        if "vehicle_type" not in meta.columns:
+            logger = logging.getLogger(__name__)
+            logger.warning(
+                "HighD tracksMeta missing vehicle class column; inferring from dimensions or defaulting to 'Car'."
+            )
+
+            def _infer_vehicle_type(row: pd.Series) -> str:
+                width = row.get("width", np.nan)
+                height = row.get("height", np.nan)
+                if pd.notna(width) and width >= 2.5:
+                    return "Truck"
+                if pd.notna(height) and height >= 7.0:
+                    return "Truck"
+                return "Car"
+
+            meta["vehicle_type"] = meta.apply(_infer_vehicle_type, axis=1)
 
         if {"track_frames", "start_frame", "end_frame"}.issubset(meta.columns):
             meta["start_frame"] = meta["start_frame"].astype(int)
