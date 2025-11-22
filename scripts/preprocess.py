@@ -194,6 +194,7 @@ def main() -> None:
             neighbor_radius_s=cfg.preprocess.neighbor_radius_s,
             max_neighbors=cfg.preprocess.max_neighbors,
             allow_gaps=cfg.preprocess.allow_gaps,
+            risk_ttc_thresholds=cfg.windows.risk_ttc_thresholds,
         )
         for split_name, keys in splits.items():
             split_df = frenet_df[frenet_df[split_cfg.key].isin(keys)].copy()

@@ -61,6 +61,7 @@ class HighDDataset(BaseDataset):
             df["frame_rate"] = context["frame_rate"]
             df["speed_limit"] = context["speed_limit"]
             df["recording_location"] = context["recording_location"]
+            df["driving_direction"] = context.get("driving_direction", np.nan)
             df["dataset"] = self.name
 
             track_meta = self._standardize_tracks_meta(pd.read_csv(tracks_meta_path))
@@ -102,6 +103,7 @@ class HighDDataset(BaseDataset):
             "jerk_x",
             "jerk_y",
             "lane_id",
+            "driving_direction",
             "lane_offset",
             "width",
             "height",

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any, Dict, Iterable, List
+from typing import Any, Dict, Iterable, List, Tuple
 
 import yaml
 from pydantic import BaseModel, Field
@@ -39,6 +39,7 @@ class PreprocessConfig(BaseModel):
 class WindowsConfig(BaseModel):
     step_sec: float = 0.5
     pad_value: float = 0.0
+    risk_ttc_thresholds: Tuple[float, float, float] = (5.0, 3.0, 1.5)
 
 
 class TrainingConfig(BaseModel):
