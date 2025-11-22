@@ -4,11 +4,17 @@ from __future__ import annotations
 import argparse
 import json
 import pickle
+import sys
 from collections import OrderedDict
 from pathlib import Path
 
 import numpy as np
 import pandas as pd
+
+ROOT = Path(__file__).resolve().parents[1]
+SRC_ROOT = ROOT / "src"
+if str(SRC_ROOT) not in sys.path:
+    sys.path.insert(0, str(SRC_ROOT))
 
 from piuq.config import load_config
 from piuq.data.configs import load_dataset_process_config
