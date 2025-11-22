@@ -41,3 +41,4 @@ training:
 
 # Override any field by providing an extra YAML via --config-overrides or
 # environment variables matching the dotted path, e.g. PREPROCESS_HISTORY_SEC=4.0
+# 通过 --config-overrides 提供额外 YAML，或使用与点分路径一致的环境变量（如 PREPROCESS_HISTORY_SEC=4.0）覆盖任意字段

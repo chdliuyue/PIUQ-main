@@ -24,6 +24,7 @@ def compute_ttc_residual(traj: torch.Tensor, dt: float = 1.0, eps: float = 1e-6)
     remaining = (traj[:, -1].unsqueeze(1) - traj[:, :-1]).norm(dim=-1)
     ttc = remaining / speed
     # Ideal TTC drops roughly by dt each step; penalize deviations.
+    # 理想情况下 TTC 每步约减少 dt，对偏离情况进行惩罚。
     target_drop = torch.full_like(ttc[:, 1:], dt)
     return torch.abs((ttc[:, :-1] - ttc[:, 1:]) - target_drop)
 

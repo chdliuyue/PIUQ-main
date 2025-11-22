@@ -1,4 +1,4 @@
-"""Dataset tensorization placeholder.
+"""Dataset tensorization placeholder module.
 数据集张量化的占位模块。
 
 This module will convert window dictionaries into tensors suitable for

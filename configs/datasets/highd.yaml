@@ -1,5 +1,6 @@
 dataset: highD
 # Extract the highD release so that *_tracks.csv live under highD/data
+# 解压 highD 数据集，使 *_tracks.csv 位于 highD/data 目录下
 raw_subdir: highD/data
 sampling_hz: 25
 target_hz: 10

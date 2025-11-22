@@ -22,13 +22,17 @@ def fde(pred: torch.Tensor, target: torch.Tensor) -> torch.Tensor:
 
 
 def bce_loss(logits: torch.Tensor, target: torch.Tensor) -> torch.Tensor:
-    """Binary cross entropy with logits."""
+    """Binary cross entropy with logits.
+    基于 logits 的二元交叉熵损失。
+    """
 
     return torch.nn.functional.binary_cross_entropy_with_logits(logits, target)
 
 
 def classification_accuracy(logits: torch.Tensor, target: torch.Tensor) -> torch.Tensor:
-    """Compute accuracy from logits and binary targets."""
+    """Compute accuracy from logits and binary targets.
+    使用 logits 与二元标签计算准确率。
+    """
 
     preds = (logits.sigmoid() > 0.5).float()
     return (preds == target).float().mean()
