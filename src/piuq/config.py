@@ -26,6 +26,7 @@ class PreprocessConfig(BaseModel):
     downsample_hz: float = 10.0
     smooth_window: int = 7
     centerline_points: int = 200
+    flow_frame_chunk_size: int = 10_000
     datasets: List[str] = Field(default_factory=lambda: ["highD"])
     dataset_config_dir: Path = Path("configs/datasets")
     history_sec: float = 3.0

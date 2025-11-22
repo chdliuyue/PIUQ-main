@@ -24,7 +24,6 @@ from piuq.data.pipeline import downsample_tracks, harmonize_features, smooth_pos
 from piuq.data.windows import WindowBuilder
 
 ROWS_PER_SHARD = 250_000
-FLOW_FRAMES_PER_CHUNK = 100_000
 
 
 def parse_args() -> argparse.Namespace:
@@ -181,7 +180,7 @@ def main() -> None:
 
         print(f"[INFO] Loading raw {ds_name} from {raw_path}")
         raw_partitions = ds.load_raw(
-            raw_path, flow_frame_chunk_size=FLOW_FRAMES_PER_CHUNK
+            raw_path, flow_frame_chunk_size=cfg.preprocess.flow_frame_chunk_size
         )
 
         split_cfg = cfg.preprocess.split
