@@ -159,6 +159,8 @@ class HighDDataset(BaseDataset):
             "recording_location": location,
             "driving_direction": float(direction) if not pd.isna(direction) else np.nan,
             "lane_markings": lane_markings,
+            "upper_lane_markings": upper_markings,
+            "lower_lane_markings": lower_markings,
         }
 
     def _standardize_tracks(self, df: pd.DataFrame, frame_rate: float) -> pd.DataFrame:
@@ -404,20 +406,98 @@ class HighDDataset(BaseDataset):
         return pd.concat(records, ignore_index=True)
 
     def build_centerline(self, df: pd.DataFrame) -> np.ndarray:
+        centerlines, _ = self.build_centerlines(df)
+
+        if not centerlines:
+            return self._centerline_from_tracks(df)
+
+        rec_id = int(df["recording_id"].iloc[0]) if "recording_id" in df.columns else None
+        context = self.recording_context.get(rec_id, {}) if rec_id is not None else {}
+        driving_direction = context.get("driving_direction", np.nan) if context else np.nan
+
+        if not np.isnan(driving_direction) and driving_direction in centerlines:
+            return centerlines[int(driving_direction)]
+
+        return next(iter(centerlines.values()))
+
+    def build_centerlines(
+        self, df: pd.DataFrame
+    ) -> tuple[Dict[int, np.ndarray], Dict[int, int]]:
         rec_id = int(df["recording_id"].iloc[0]) if "recording_id" in df.columns else None
         context = self.recording_context.get(rec_id, {}) if rec_id is not None else {}
 
-        lane_markings: List[np.ndarray] = context.get("lane_markings", []) if context else []
-        driving_direction = context.get("driving_direction", np.nan) if context else np.nan
+        lane_direction_map = self._infer_lane_directions(df)
 
-        centerline = None
-        if lane_markings:
-            centerline = self._centerline_from_lane_markings(lane_markings)
+        def _lane_subset(direction: int) -> pd.DataFrame:
+            lane_ids = [lane_id for lane_id, d in lane_direction_map.items() if d == direction]
+            if "lane_id" not in df.columns or not lane_ids:
+                return df[df.get("drivingDirection", pd.Series(dtype=float)) == direction]
+            return df[df["lane_id"].isin(lane_ids)]
 
-        if centerline is None:
-            centerline = self._centerline_from_tracks(df)
+        centerlines: Dict[int, np.ndarray] = {}
+        direction_markings = {
+            1: context.get("upper_lane_markings", []),
+            2: context.get("lower_lane_markings", []),
+        }
 
-        return self._orient_centerline(centerline, driving_direction)
+        for direction in (1, 2):
+            markings = direction_markings.get(direction, [])
+            centerline = None
+            if markings:
+                centerline = self._centerline_from_lane_markings(markings)
+
+            lane_df = _lane_subset(direction)
+            if centerline is None and not lane_df.empty:
+                centerline = self._centerline_from_tracks(lane_df)
+
+            if centerline is not None:
+                centerlines[direction] = self._orient_centerline(centerline, float(direction))
+
+        if not centerlines:
+            lane_markings: List[np.ndarray] = context.get("lane_markings", []) if context else []
+            driving_direction = context.get("driving_direction", np.nan) if context else np.nan
+            centerline = None
+            if lane_markings:
+                centerline = self._centerline_from_lane_markings(lane_markings)
+            if centerline is None:
+                centerline = self._centerline_from_tracks(df)
+            direction = 1 if np.isnan(driving_direction) else int(driving_direction)
+            centerlines[direction] = self._orient_centerline(centerline, float(direction))
+
+        return centerlines, lane_direction_map
+
+    def _infer_lane_directions(self, df: pd.DataFrame) -> Dict[int, int]:
+        lane_direction: Dict[int, int] = {}
+
+        if "lane_id" not in df.columns:
+            return lane_direction
+
+        if "drivingDirection" in df.columns:
+            for lane_id, lane_df in df.groupby("lane_id"):
+                dir_vals = lane_df["drivingDirection"].dropna()
+                if len(dir_vals):
+                    lane_direction[int(lane_id)] = int(dir_vals.mode().iloc[0])
+
+        if lane_direction and len(set(lane_direction.values())) >= 2:
+            return lane_direction
+
+        medians = df.groupby("lane_id")["y"].median().sort_values()
+        if len(medians) == 1:
+            lane_direction[int(medians.index[0])] = lane_direction.get(
+                int(medians.index[0]), 1
+            )
+            return lane_direction
+
+        split = len(medians) // 2
+        upper_lanes = medians.index[:split]
+        lower_lanes = medians.index[split:]
+
+        for lane_id in upper_lanes:
+            lane_direction.setdefault(int(lane_id), 1)
+        for lane_id in lower_lanes:
+            lane_direction.setdefault(int(lane_id), 2)
+
+        return lane_direction
 
     # --- lane geometry helpers -------------------------------------------------
 
@@ -534,9 +614,62 @@ class HighDDataset(BaseDataset):
             return centerline
 
         increasing = centerline[-1, 0] >= centerline[0, 0]
-        if (driving_direction == 1 and not increasing) or (driving_direction == 2 and increasing):
+        if (driving_direction == 1 and increasing) or (driving_direction == 2 and not increasing):
             return centerline[::-1]
         return centerline
+
+    def _to_frenet_single(self, df: pd.DataFrame) -> pd.DataFrame:
+        centerlines, lane_direction_map = self.build_centerlines(df)
+
+        frames = {direction: FrenetFrame(cl) for direction, cl in centerlines.items()}
+
+        out = df.copy()
+        N = len(out)
+        res_arrays: Dict[str, np.ndarray] = {
+            "s": np.full(N, np.nan),
+            "n": np.full(N, np.nan),
+            "seg_idx": np.full(N, -1, dtype=int),
+        }
+
+        have_velocity = {"vx", "vy"}.issubset(out.columns)
+        have_accel = {"ax", "ay"}.issubset(out.columns)
+        if have_velocity:
+            res_arrays.update({"v_s": np.full(N, np.nan), "v_n": np.full(N, np.nan)})
+        if have_accel:
+            res_arrays.update({"a_s": np.full(N, np.nan), "a_n": np.full(N, np.nan)})
+
+        def _assign_direction(idx: int, row: pd.Series) -> int:
+            if "drivingDirection" in row and not pd.isna(row["drivingDirection"]):
+                return int(row["drivingDirection"])
+            if "lane_id" in row and row["lane_id"] in lane_direction_map:
+                return lane_direction_map[int(row["lane_id"])]
+            if len(centerlines) == 1:
+                return next(iter(centerlines))
+            return sorted(centerlines.keys())[0]
+
+        direction_indices: Dict[int, List[int]] = {}
+        for idx, row in out.iterrows():
+            direction = _assign_direction(idx, row)
+            if direction not in centerlines:
+                direction = next(iter(centerlines))
+            direction_indices.setdefault(direction, []).append(idx)
+
+        for direction, indices in direction_indices.items():
+            subset = out.loc[indices]
+            frenet = frames[direction]
+
+            xy = subset[["x", "y"]].to_numpy()
+            v_xy = subset[["vx", "vy"]].to_numpy() if have_velocity else None
+            a_xy = subset[["ax", "ay"]].to_numpy() if have_accel else None
+
+            res = frenet.to_frenet(xy, v_xy=v_xy, a_xy=a_xy)
+            for key, values in res.items():
+                res_arrays[key][subset.index] = values
+
+        for key, values in res_arrays.items():
+            out[key] = values
+
+        return out
 
 
 def dataset_factory(name: str):
