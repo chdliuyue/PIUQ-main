@@ -175,10 +175,31 @@ class HighDDataset(BaseDataset):
 
                 df = df.sort_values(["frame", "track_id"]).reset_index(drop=True)
 
+                centerline = self.build_centerline(df)
+                frenet_frame = FrenetFrame(centerline)
+
+                def _attach_frenet(chunk: pd.DataFrame) -> pd.DataFrame:
+                    xy = chunk[["x", "y"]].to_numpy()
+                    v_xy = (
+                        chunk[["vx", "vy"]].to_numpy()
+                        if {"vx", "vy"}.issubset(chunk.columns)
+                        else None
+                    )
+                    a_xy = (
+                        chunk[["ax", "ay"]].to_numpy()
+                        if {"ax", "ay"}.issubset(chunk.columns)
+                        else None
+                    )
+                    frenet = frenet_frame.to_frenet(xy, v_xy=v_xy, a_xy=a_xy)
+                    out = chunk.copy()
+                    for k, v in frenet.items():
+                        out[k] = v
+                    return out
+
                 for annotated in self._annotate_traffic_flow(
                     df, chunk_size=flow_frame_chunk_size
                 ):
-                    annotated = self.to_frenet(annotated)
+                    annotated = _attach_frenet(annotated)
                     cols = [c for c in keep_cols if c in annotated.columns]
                     yield annotated[cols]
 
