@@ -91,3 +91,44 @@ def test_lane_center_frenet_offsets_small():
 
     frenet_df = dataset.to_frenet(df)
     assert np.max(np.abs(frenet_df["n"])) < 1e-6
+
+
+def test_tracks_vehicle_type_from_meta_only():
+    dataset = HighDDataset()
+
+    tracks_raw = pd.DataFrame(
+        {
+            "id": [1, 1, 2],
+            "frame": [1, 2, 1],
+            "x": [0.0, 1.0, 0.5],
+            "y": [0.0, 0.2, 0.1],
+            "width": [2.0, 2.0, 2.2],
+            "height": [1.5, 1.5, 1.6],
+            "xVelocity": [1.0, 1.1, 0.9],
+            "yVelocity": [0.0, 0.0, 0.0],
+            "xAcceleration": [0.0, 0.0, 0.0],
+            "yAcceleration": [0.0, 0.0, 0.0],
+            "laneId": [1, 1, 1],
+        }
+    )
+
+    tracks = dataset._standardize_tracks(tracks_raw, frame_rate=25.0)
+    assert "vehicle_type" not in tracks.columns
+
+    meta_raw = pd.DataFrame(
+        {
+            "id": [1, 2],
+            "numFrames": [2, 1],
+            "width": [2.0, 2.2],
+            "height": [1.5, 1.6],
+            "class": ["Car", "Truck"],
+            "initialFrame": [1, 1],
+            "finalFrame": [2, 1],
+        }
+    )
+
+    meta = dataset._standardize_tracks_meta(meta_raw)
+    merged = tracks.merge(meta, on="track_id", how="left")
+
+    assert set(meta["vehicle_type"]) == {"Car", "Truck"}
+    assert set(merged["vehicle_type"].dropna()) == {"Car", "Truck"}

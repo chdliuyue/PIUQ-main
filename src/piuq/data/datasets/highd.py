@@ -194,7 +194,6 @@ class HighDDataset(BaseDataset):
             "xAcceleration",
             "yAcceleration",
             "laneId",
-            "class",
         }
         self._require_columns(df, list(required_cols), "tracks")
 
@@ -207,7 +206,6 @@ class HighDDataset(BaseDataset):
                 "xAcceleration": "ax",
                 "yAcceleration": "ay",
                 "laneId": "lane_id",
-                "class": "vehicle_type",
                 "precedingId": "preceding_id",
                 "followingId": "following_id",
             }
