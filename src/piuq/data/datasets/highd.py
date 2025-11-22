@@ -26,6 +26,7 @@ class HighDDataset(BaseDataset):
         super().__init__()
         self.centerline_points = centerline_points
         self.recording_context: Dict[int, Dict[str, float | List[np.ndarray]]] = {}
+        self.recording_prefix_to_id: Dict[str, int] = {}
 
     @staticmethod
     def _require_columns(df: pd.DataFrame, required: List[str], context: str) -> None:
@@ -43,6 +44,7 @@ class HighDDataset(BaseDataset):
         **_: Any,
     ) -> Iterable[pd.DataFrame]:
         self.recording_context = {}
+        self.recording_prefix_to_id = {}
         root = Path(root)
         search_root = root / "data" if (root / "data").exists() else root
         track_files = sorted(search_root.glob("*_tracks.csv"))
@@ -53,9 +55,9 @@ class HighDDataset(BaseDataset):
             )
 
         for tracks_path in track_files:
-            rec_id = tracks_path.stem.split("_")[0]
-            rec_meta_path = tracks_path.with_name(f"{rec_id}_recordingMeta.csv")
-            tracks_meta_path = tracks_path.with_name(f"{rec_id}_tracksMeta.csv")
+            rec_prefix = tracks_path.stem.split("_")[0]
+            rec_meta_path = tracks_path.with_name(f"{rec_prefix}_recordingMeta.csv")
+            tracks_meta_path = tracks_path.with_name(f"{rec_prefix}_tracksMeta.csv")
             if not rec_meta_path.exists():
                 raise FileNotFoundError(f"Recording meta not found: {rec_meta_path}")
             if not tracks_meta_path.exists():
@@ -65,6 +67,7 @@ class HighDDataset(BaseDataset):
             rec_identifier = int(rec_meta["id"].iloc[0])
             context["recording_id"] = rec_identifier
             self.recording_context[rec_identifier] = context
+            self.recording_prefix_to_id[rec_prefix] = rec_identifier
 
         def _iterator() -> Iterable[pd.DataFrame]:
             keep_cols = [
@@ -130,9 +133,15 @@ class HighDDataset(BaseDataset):
             ]
 
             for tracks_path in tqdm(track_files, desc="highD recordings"):
-                rec_id = int(tracks_path.stem.split("_")[0])
+                rec_prefix = tracks_path.stem.split("_")[0]
+                rec_id = self.recording_prefix_to_id.get(rec_prefix)
+                if rec_id is None:
+                    raise KeyError(
+                        f"Recording prefix {rec_prefix} missing from context."
+                        " Ensure all *_recordingMeta.csv files are present."
+                    )
                 context = self.recording_context[rec_id]
-                tracks_meta_path = tracks_path.with_name(f"{rec_id}_tracksMeta.csv")
+                tracks_meta_path = tracks_path.with_name(f"{rec_prefix}_tracksMeta.csv")
 
                 df = self._standardize_tracks(
                     pd.read_csv(tracks_path), context["frame_rate"]
