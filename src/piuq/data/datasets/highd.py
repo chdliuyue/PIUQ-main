@@ -56,7 +56,7 @@ class HighDDataset(BaseDataset):
             context = self._extract_recording_context(rec_meta)
             self.recording_context[int(rec_meta["id"].iloc[0])] = context
 
-            df = self._standardize_tracks(pd.read_csv(tracks_path))
+            df = self._standardize_tracks(pd.read_csv(tracks_path), context["frame_rate"])
             df["recording_id"] = int(rec_meta["id"].iloc[0])
             df["frame_rate"] = context["frame_rate"]
             df["speed_limit"] = context["speed_limit"]
@@ -71,6 +71,8 @@ class HighDDataset(BaseDataset):
             df = self._compute_lane_offsets(df)
             df = self._compute_uncertainty(df)
             df = self._compute_normalized(df)
+
+            df = df.sort_values(["frame", "track_id"]).reset_index(drop=True)
 
             records.append(df)
 
@@ -159,7 +161,7 @@ class HighDDataset(BaseDataset):
             "lane_markings": lane_markings,
         }
 
-    def _standardize_tracks(self, df: pd.DataFrame) -> pd.DataFrame:
+    def _standardize_tracks(self, df: pd.DataFrame, frame_rate: float) -> pd.DataFrame:
         required_cols = {
             "id",
             "frame",
@@ -197,7 +199,10 @@ class HighDDataset(BaseDataset):
         df["y_center"] = df["y"] + df["height"] / 2.0
         df["x"] = df["x_center"]
         df["y"] = df["y_center"]
-        df["t"] = df.groupby("track_id")["frame"].transform(lambda s: s - s.min())
+        if frame_rate and not np.isnan(frame_rate) and frame_rate > 0:
+            df["t"] = (df["frame"].astype(float) - 1.0) / frame_rate
+        else:
+            df["t"] = np.nan
         return df
 
     def _standardize_tracks_meta(self, meta: pd.DataFrame) -> pd.DataFrame:
@@ -301,7 +306,6 @@ class HighDDataset(BaseDataset):
             df["jerk_x"] = df.groupby("track_id")["ax"].diff() / dt
             df["jerk_y"] = df.groupby("track_id")["ay"].diff() / dt
             df["jerk"] = np.hypot(df["jerk_x"], df["jerk_y"])
-            df["t"] = df["t"] / frame_rate
         else:
             df[["jerk_x", "jerk_y", "jerk"]] = np.nan
             df["t"] = df["t"].astype(float)

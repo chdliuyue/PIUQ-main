@@ -106,7 +106,7 @@ class WindowBuilder:
 
         windows: List[Dict[str, Any]] = []
         for (dataset, rec_id), scene_df in df.groupby(["dataset", "recording_id"]):
-            scene_df = scene_df.sort_values(["track_id", "frame"])
+            scene_df = scene_df.sort_values(["frame", "track_id"])
             dt_series = scene_df.groupby("track_id")["t"].diff().dropna()
             if dt_series.empty:
                 continue
