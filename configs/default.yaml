@@ -30,6 +30,7 @@ preprocess:
 windows:
   step_sec: 0.5
   pad_value: 0.0
+  risk_ttc_thresholds: [5.0, 3.0, 1.5]
 
 training:
   batch_size: 16

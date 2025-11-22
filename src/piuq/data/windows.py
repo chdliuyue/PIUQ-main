@@ -19,6 +19,7 @@ class WindowBuilder:
         neighbor_radius_s: float,
         max_neighbors: int,
         allow_gaps: bool = False,
+        risk_ttc_thresholds: Iterable[float] = (5.0, 3.0, 1.5),
     ) -> None:
         self.history_sec = history_sec
         self.future_sec = future_sec
@@ -26,6 +27,7 @@ class WindowBuilder:
         self.neighbor_radius_s = neighbor_radius_s
         self.max_neighbors = max_neighbors
         self.allow_gaps = allow_gaps
+        self.risk_ttc_thresholds = tuple(sorted(risk_ttc_thresholds, reverse=True))
 
     @staticmethod
     def _kinematics(values: np.ndarray, dt: float) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
@@ -94,6 +96,39 @@ class WindowBuilder:
         physics = np.array([ttc, thw, drac, jerk_mag, lwr_residual], dtype=np.float32)
         return physics, uncertainty, ttc, drac
 
+    @staticmethod
+    def _filter_neighbors_by_direction(neighbors: pd.DataFrame, ego_state: pd.Series) -> pd.DataFrame:
+        """Keep neighbors that share the ego's driving direction or lane group."""
+
+        for column in ("lane_group", "driving_direction"):
+            if column in neighbors.columns and column in ego_state.index:
+                ego_value = ego_state.get(column, np.nan)
+                if pd.notna(ego_value):
+                    return neighbors[neighbors[column] == ego_value]
+        return neighbors
+
+    @staticmethod
+    def _ttc_min_future(fut_df: pd.DataFrame) -> float:
+        """Minimum finite TTC over the ego future; infinity if none exist."""
+
+        if "ttc" not in fut_df.columns:
+            return np.inf
+        ttc_values = fut_df["ttc"].to_numpy(dtype=float)
+        mask = np.isfinite(ttc_values) & (ttc_values > 0.0)
+        if not np.any(mask):
+            return np.inf
+        return float(np.nanmin(ttc_values[mask]))
+
+    def _risk_label_from_ttc(self, ttc_min_future: float) -> int:
+        """Map TTC minimum to a discrete risk tier based on configured thresholds."""
+
+        if not self.risk_ttc_thresholds:
+            return 0
+        for idx, threshold in enumerate(self.risk_ttc_thresholds):
+            if ttc_min_future > threshold:
+                return idx
+        return len(self.risk_ttc_thresholds)
+
     def build(self, df: pd.DataFrame) -> List[Dict[str, Any]]:
         """Generate window dictionaries grouped by dataset and recording.
         按数据集与录像编号生成窗口字典。
@@ -148,6 +183,8 @@ class WindowBuilder:
 
                     ego_state = hist_df.iloc[-1]
                     neighbors = neighbors_df_all[neighbors_df_all["track_id"] != track_id]
+                    neighbors = self._filter_neighbors_by_direction(neighbors, ego_state)
+                    ds = np.array([], dtype=float)
                     if not neighbors.empty:
                         ds = np.abs(neighbors["s"].to_numpy() - ego_state["s"])
                     neighbors = neighbors.assign(ds=ds)
@@ -157,11 +194,8 @@ class WindowBuilder:
                     physics, uncertainty, ttc, drac = self._physics_features(
                         hist_df, neighbors, track_lookup, dt
                     )
-                    risk_label = 0
-                    if (np.isfinite(ttc) and ttc < 2.0) or drac > 3.0:
-                        risk_label = 2
-                    elif np.isfinite(ttc) and ttc < 4.0:
-                        risk_label = 1
+                    ttc_min_future = self._ttc_min_future(fut_df)
+                    risk_label = self._risk_label_from_ttc(ttc_min_future)
                     scene_label = 2 if len(neighbors) >= 5 else 1 if len(neighbors) >= 2 else 0
 
                     window = {
@@ -177,6 +211,7 @@ class WindowBuilder:
                         "uncertainty_features": uncertainty,
                         "risk_label": risk_label,
                         "scene_label": scene_label,
+                        "ttc_min_future": ttc_min_future,
                     }
                     windows.append(window)
         return windows
