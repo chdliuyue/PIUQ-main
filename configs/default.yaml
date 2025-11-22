@@ -12,6 +12,7 @@ preprocess:
   downsample_hz: 10
   smooth_window: 7
   centerline_points: 200
+  flow_frame_chunk_size: 10000
   datasets:
     - highD
   history_sec: 3.0
