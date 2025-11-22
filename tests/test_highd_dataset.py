@@ -1,3 +1,5 @@
+import logging
+
 import pandas as pd
 import pytest
 import numpy as np
@@ -132,3 +134,24 @@ def test_tracks_vehicle_type_from_meta_only():
 
     assert set(meta["vehicle_type"]) == {"Car", "Truck"}
     assert set(merged["vehicle_type"].dropna()) == {"Car", "Truck"}
+
+
+def test_tracks_meta_missing_class_falls_back(caplog):
+    dataset = HighDDataset()
+    meta_raw = pd.DataFrame(
+        {
+            "id": [1, 2],
+            "numFrames": [3, 3],
+            "width": [2.0, 2.8],
+            "height": [1.5, 3.5],
+            "initialFrame": [1, 4],
+            "finalFrame": [3, 6],
+        }
+    )
+
+    with caplog.at_level(logging.WARNING):
+        meta = dataset._standardize_tracks_meta(meta_raw)
+
+    assert "vehicle_type" in meta.columns
+    assert set(meta["vehicle_type"]) == {"Car", "Truck"}
+    assert "missing vehicle class" in caplog.text
