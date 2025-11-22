@@ -27,10 +27,11 @@ This repository provides data processing scaffolding and future modeling helpers
 ## 快速开始
 ```bash
 pip install -r requirements.txt
+pip install -e .
 python scripts/preprocess.py --config configs/default.yaml --dataset highD
 ```
 
-Processed Frenet trajectories and window pickles will be written to `data/processed/`.
+The editable install makes the `piuq` package available when running scripts directly. Processed Frenet trajectories and window pickles will be written to `data/processed/`.
 处理后的 Frenet 轨迹与窗口 pickle 将写入 `data/processed/`。
 
 ## Detailed workflow
